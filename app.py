@@ -16,8 +16,7 @@ import os
 import importlib.util
 
 # =============================================================================
-#  BULLETPROOF ABSOLUTE FILE IMPORTER
-#  (Works 100% on Streamlit Cloud with spaces in folder names)
+#  ROBUST ABSOLUTE FILE IMPORTER
 # =============================================================================
 
 # Get the absolute path to the current script (app.py)
@@ -26,14 +25,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def load_file_module(relative_path):
     """
     Loads a python file by its absolute filesystem path.
-    Bypasses all namespace, space-in-folder, and working directory issues.
+    Uses normpath to handle any environment slashes.
     """
-    abs_path = os.path.join(BASE_DIR, relative_path)
-    if not os.path.exists(abs_path):
-        return None
+    # Normalize the path to handle OS differences (Windows/Linux slashes)
+    normalized_path = os.path.normpath(os.path.join(BASE_DIR, relative_path))
     
+    # Check if file actually exists
+    if not os.path.exists(normalized_path):
+        return None
+        
     module_name = os.path.splitext(os.path.basename(relative_path))[0]
-    spec = importlib.util.spec_from_file_location(module_name, abs_path)
+    spec = importlib.util.spec_from_file_location(module_name, normalized_path)
+    
     if spec is None:
         return None
         
@@ -44,10 +47,11 @@ def load_file_module(relative_path):
     except Exception:
         return None
 
-# Load all required modules by absolute file paths
+# Load LRC Calculators
 upr_engine = load_file_module("LRC Calculators/upr_engine.py")
 loss_comp_engine = load_file_module("LRC Calculators/loss_component_engine.py")
 
+# Load LIC Calculators
 ocr_engine = load_file_module("LIC Calculators/FCF Calculators/OCR Calculators/ocr_engine.py")
 
 ibnr_pct = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/percentage_ibnr.py")
@@ -58,16 +62,36 @@ ibnr_bf = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/bf_
 ulae_engine = load_file_module("LIC Calculators/FCF Calculators/ULAE Calculators/ulae_engine.py")
 npr_engine = load_file_module("LIC Calculators/FCF Calculators/NPR Calculators/npr_engine.py")
 
+# Load RA Calculators
 ra_mack = load_file_module("LIC Calculators/RA Calculators/mack_ra.py")
 ra_boot = load_file_module("LIC Calculators/RA Calculators/bootstrap_ra.py")
 
+# Load Shared Helpers
 act_helpers = load_file_module("utils/actuarial_helpers.py")
 
+# Load Full Valuation
 full_engine = load_file_module("Full Valuation/full_LRC_IFRS17.py")
 
-# Checkpoint to ensure modules loaded correctly
-if upr_engine is None or ocr_engine is None or act_helpers is None:
-    st.error("Critical Error: Could not locate key python files. Please check your folder structure.")
+
+# =============================================================================
+#  CRITICAL CHECKPOINT WITH DEBUGGING
+# =============================================================================
+
+# We check if the core modules loaded. If not, we show the exact path Python is looking for.
+if upr_engine is None:
+    st.error(f"❌ Critical Error: Could not find `upr_engine.py`.")
+    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'LRC Calculators/upr_engine.py'))}`")
+    st.write("Please check your folder structure and file names to make sure they match exactly.")
+    st.stop()
+
+if ocr_engine is None:
+    st.error(f"❌ Critical Error: Could not find `ocr_engine.py`.")
+    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'LIC Calculators/FCF Calculators/OCR Calculators/ocr_engine.py'))}`")
+    st.stop()
+
+if act_helpers is None:
+    st.error(f"❌ Critical Error: Could not find `actuarial_helpers.py`.")
+    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'utils/actuarial_helpers.py'))}`")
     st.stop()
 
 
@@ -140,7 +164,7 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
     try:
         df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(5), width='stretch')
 
         # ---- Step 2: Map Columns ----
         st.markdown("#### Step 2: Map Columns")
@@ -266,7 +290,7 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
                 "Vol-Weighted": vw, "Simple Avg": sa, "Geometric": geo,
                 "Medial Avg": med, "Lin Reg": lr, "Wtd Last 3": wln
             })
-            st.dataframe(factor_df, use_container_width=True)
+            st.dataframe(factor_df, width='stretch')
             st.write(f"**Stability Diagnostics:** Mean CV: {mean_cv:.2%} | R²: {r2:.4f}")
             st.info(f"**Recommendation:** {recs[0][0]} — {recs[0][1]}")
 
@@ -285,7 +309,7 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
             results = engine_callback(working_cum, chosen, from_dt, g_code)
 
             st.subheader("Results")
-            st.dataframe(results['results_df'], use_container_width=True)
+            st.dataframe(results['results_df'], width='stretch')
             st.write(f"**Total IBNR: {results['total_ibnr']:,.2f}**")
 
             output = BytesIO()
@@ -322,7 +346,7 @@ def render_ocr_calculator():
     try:
         df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(5), width='stretch')
         cols = df.columns.tolist()
 
         grouping_cols = st.multiselect("Select Grouping Columns (e.g., Line of Business)", cols, key="ocr_grp")
@@ -335,7 +359,7 @@ def render_ocr_calculator():
         if st.button("Calculate OCR", key="ocr_run", use_container_width=True):
             results, report, grand_total = ocr_engine.calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
             st.subheader("OCR Results")
-            st.dataframe(results, use_container_width=True)
+            st.dataframe(results, width='stretch')
             st.success(f"Grand Total OCR: {grand_total:,.2f}")
 
             output = BytesIO()
@@ -373,7 +397,7 @@ def render_percentage_calculator():
     try:
         df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(5), width='stretch')
         cols = df.columns.tolist()
         date_col = st.selectbox("Date Column", cols, key="pct_date")
         lob_col = st.selectbox("Line of Business Column", cols, key="pct_lob")
@@ -385,7 +409,7 @@ def render_percentage_calculator():
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
             results, total = ibnr_pct.calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
             st.subheader("Results")
-            st.dataframe(results, use_container_width=True)
+            st.dataframe(results, width='stretch')
             st.success(f"Grand Total IBNR: {total:,.2f}")
 
             output = BytesIO()
@@ -446,7 +470,7 @@ def render_ulae_calculator():
     try:
         df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(5), width='stretch')
         cols = df.columns.tolist()
         
         portfolio_col = st.selectbox("Portfolio Column", cols, key="ulae_port")
@@ -492,7 +516,7 @@ def render_ulae_calculator():
                 results, total_base = ulae_engine.calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
             
             st.subheader("Results")
-            st.dataframe(results, use_container_width=True)
+            st.dataframe(results, width='stretch')
     except Exception as e: st.error(f"Error: {e}")
 
     st.markdown('</div>', unsafe_allow_html=True)
@@ -522,9 +546,9 @@ def render_npr_calculator():
             df_lic = pd.read_csv(lic_file) if lic_file.name.endswith('.csv') else pd.read_excel(lic_file)
             
             st.subheader("Reinsurer Data Preview")
-            st.dataframe(df_ri.head(5))
+            st.dataframe(df_ri.head(5), width='stretch')
             st.subheader("LIC Data Preview")
-            st.dataframe(df_lic.head(5))
+            st.dataframe(df_lic.head(5), width='stretch')
 
             st.info("Full column mapping and calculation logic is available in the `npr_engine.py` file. This UI is a placeholder.")
         except Exception as e: st.error(f"Error: {e}")
@@ -696,7 +720,7 @@ def render_full_valuation():
         if file:
             try:
                 df = pd.read_csv(file) if file.name.endswith('.csv') else pd.read_excel(file)
-                st.dataframe(df.head(5))
+                st.dataframe(df.head(5), width='stretch')
                 
                 if st.button("Calculate UPR", key="calc_upr"):
                     st.success("UPR calculation would run here.")
@@ -755,7 +779,7 @@ def render_full_valuation():
                 )
 
                 st.success("Full IFRS 17 LRC Calculated Successfully!")
-                st.dataframe(pd.DataFrame(results).T)
+                st.dataframe(pd.DataFrame(results).T, width='stretch')
 
             except Exception as e:
                 st.error(f"Error: {e}")
