@@ -14,9 +14,10 @@ from scipy import interpolate
 import sys
 import os
 import importlib.util
+import glob
 
 # =============================================================================
-#  ROBUST ABSOLUTE FILE IMPORTER
+#  CASE-INSENSITIVE ABSOLUTE FILE IMPORTER
 # =============================================================================
 
 # Get the absolute path to the current script (app.py)
@@ -25,17 +26,22 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def load_file_module(relative_path):
     """
     Loads a python file by its absolute filesystem path.
-    Uses normpath to handle any environment slashes.
+    Uses glob to perform a case-insensitive search for the file.
     """
-    # Normalize the path to handle OS differences (Windows/Linux slashes)
-    normalized_path = os.path.normpath(os.path.join(BASE_DIR, relative_path))
+    # Ensure the path uses forward slashes for glob
+    search_pattern = os.path.join(BASE_DIR, relative_path.replace('\\', '/'))
     
-    # Check if file actually exists
-    if not os.path.exists(normalized_path):
+    # Use glob to find the file (ignores case sensitivity)
+    matched_files = glob.glob(search_pattern, recursive=False)
+    
+    if not matched_files:
         return None
         
-    module_name = os.path.splitext(os.path.basename(relative_path))[0]
-    spec = importlib.util.spec_from_file_location(module_name, normalized_path)
+    # Take the first matched file
+    abs_path = matched_files[0]
+    
+    module_name = os.path.splitext(os.path.basename(abs_path))[0]
+    spec = importlib.util.spec_from_file_location(module_name, abs_path)
     
     if spec is None:
         return None
@@ -74,24 +80,24 @@ full_engine = load_file_module("Full Valuation/full_LRC_IFRS17.py")
 
 
 # =============================================================================
-#  CRITICAL CHECKPOINT WITH DEBUGGING
+#  CRITICAL CHECKPOINT
 # =============================================================================
 
-# We check if the core modules loaded. If not, we show the exact path Python is looking for.
+# We check if the core modules loaded. If not, we tell the user exactly what happened.
 if upr_engine is None:
     st.error(f"❌ Critical Error: Could not find `upr_engine.py`.")
-    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'LRC Calculators/upr_engine.py'))}`")
-    st.write("Please check your folder structure and file names to make sure they match exactly.")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LRC Calculators')}`")
+    st.write("Please check that a file named `upr_engine.py` exists in that folder. Capitalization does not matter.")
     st.stop()
 
 if ocr_engine is None:
     st.error(f"❌ Critical Error: Could not find `ocr_engine.py`.")
-    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'LIC Calculators/FCF Calculators/OCR Calculators/ocr_engine.py'))}`")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LIC Calculators/FCF Calculators/OCR Calculators')}`")
     st.stop()
 
 if act_helpers is None:
     st.error(f"❌ Critical Error: Could not find `actuarial_helpers.py`.")
-    st.write(f"**Python is looking here:** `{os.path.normpath(os.path.join(BASE_DIR, 'utils/actuarial_helpers.py'))}`")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'utils')}`")
     st.stop()
 
 
