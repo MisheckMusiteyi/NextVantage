@@ -211,7 +211,7 @@ def render_upr_calculator():
     with col2: client_name = st.text_input("Client", value="Client", key="upr_cn").strip()
     with col3: method = st.selectbox("Method", ["365th","24th","8th"], key="upr_mt")
     with col4: pass
-    valuation_date = pd.to_datetime(valuation_date)
+    valuation_date = pd.Timestamp(valuation_date)
     uploaded_file = st.file_uploader("Upload premium register (CSV or Excel)", type=["csv","xlsx","xls"], key="upr_f")
     if uploaded_file is not None:
         try:
@@ -333,7 +333,7 @@ def render_bcl_calculator():
         df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce')
         df[amt_col]  = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
-        from_dt = pd.to_datetime(from_date); to_dt = pd.to_datetime(to_date)
+        from_dt = pd.Timestamp(from_date); to_dt = pd.Timestamp(to_date)
         df = df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
 
         def ap(d):
@@ -462,7 +462,7 @@ def render_capecod_calculator():
         df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
-        from_dt=pd.to_datetime(from_date); to_dt=pd.to_datetime(to_date)
+        from_dt=pd.Timestamp(from_date); to_dt=pd.Timestamp(to_date)
         df=df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
         if st.button("Calculate Cape Cod IBNR",key="cc_run",width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique()); rows=[]
@@ -562,7 +562,7 @@ def render_bf_calculator():
         df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
-        from_dt=pd.to_datetime(from_date); to_dt=pd.to_datetime(to_date)
+        from_dt=pd.Timestamp(from_date); to_dt=pd.Timestamp(to_date)
         df=df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
         lobs=sorted(df[lob_col].dropna().unique())
         st.markdown("**ELR per Portfolio (%):**")
@@ -1082,9 +1082,9 @@ def _render_simplified_upr_branch(report_date, report_client):
     Includes UPR, OCR, IBNR (BCL), ULAE, RA (Bootstrap @90%), and the
     Income Statement.
     """
-    val_date = pd.to_datetime(report_date)
-    from_dt = pd.to_datetime('2020-01-01')
-    to_dt = pd.to_datetime('2025-12-31')
+    val_date = pd.Timestamp(report_date)
+    from_dt = pd.Timestamp('2020-01-01')
+    to_dt = pd.Timestamp('2025-12-31')
     n_periods_bcl = to_dt.year - from_dt.year + 1
 
     # ---- SELECT RESERVES ----
@@ -1254,9 +1254,9 @@ def _render_simplified_upr_branch(report_date, report_client):
         else:
             with st.spinner("Running full IFRS 17 valuation..."):
                 results = {}
-                val_date = pd.to_datetime(report_date)
-                from_dt = pd.to_datetime('2020-01-01')
-                to_dt = pd.to_datetime('2025-12-31')
+                val_date = pd.Timestamp(report_date)
+                from_dt = pd.Timestamp('2020-01-01')
+                to_dt = pd.Timestamp('2025-12-31')
                 n_periods_bcl = to_dt.year - from_dt.year + 1
 
                 portfolios = []
@@ -1733,7 +1733,7 @@ def _render_full_ifrs17_lrc_branch(report_date, report_client):
     Full IFRS 17 LRC (PAA) Mode.
     Independent of the Simplified UPR branch.
     """
-    val_date = pd.to_datetime(report_date)
+    val_date = pd.Timestamp(report_date)
     ifrs17_data = {}
 
     # ---- CONFIGURATION TOGGLES ----
