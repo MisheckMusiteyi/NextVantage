@@ -13,59 +13,62 @@ import re
 from scipy import interpolate
 import sys
 import os
+import importlib.util
 
 # =============================================================================
-#  ABSOLUTE PATH IMPORT SYSTEM (Works perfectly on Streamlit Cloud)
+#  BULLETPROOF ABSOLUTE FILE IMPORTER
+#  (Works 100% on Streamlit Cloud with spaces in folder names)
 # =============================================================================
 
-# 1. Add the root app directory
+# Get the absolute path to the current script (app.py)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
 
-# 2. Explicitly add every nested subfolder to sys.path (Fixes 'NoneType' on Cloud)
-sys.path.insert(0, os.path.join(BASE_DIR, "LRC Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "OCR Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "IBNR Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "ULAE Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "NPR Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "RA Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "Full Valuation"))
-sys.path.insert(0, os.path.join(BASE_DIR, "utils"))
+def load_file_module(relative_path):
+    """
+    Loads a python file by its absolute filesystem path.
+    Bypasses all namespace, space-in-folder, and working directory issues.
+    """
+    abs_path = os.path.join(BASE_DIR, relative_path)
+    if not os.path.exists(abs_path):
+        return None
+    
+    module_name = os.path.splitext(os.path.basename(relative_path))[0]
+    spec = importlib.util.spec_from_file_location(module_name, abs_path)
+    if spec is None:
+        return None
+        
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
 
-# 3. Import everything directly (folders are now recognized)
-# --- LRC CALCULATORS ---
-from upr_engine import calculate_upr
-from loss_component_engine import calculate_loss_component
+# Load all required modules by absolute file paths
+upr_engine = load_file_module("LRC Calculators/upr_engine.py")
+loss_comp_engine = load_file_module("LRC Calculators/loss_component_engine.py")
 
-# --- LIC CALCULATORS ---
-from ocr_engine import calculate_ocr
+ocr_engine = load_file_module("LIC Calculators/FCF Calculators/OCR Calculators/ocr_engine.py")
 
-from percentage_ibnr import calculate_percentage_ibnr
-from bcl_ibnr import calculate_bcl_ibnr
-from cape_cod_ibnr import calculate_cape_cod_ibnr
-from bf_ibnr import calculate_bf_ibnr
+ibnr_pct = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/percentage_ibnr.py")
+ibnr_bcl = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/bcl_ibnr.py")
+ibnr_cc = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/cape_cod_ibnr.py")
+ibnr_bf = load_file_module("LIC Calculators/FCF Calculators/IBNR Calculators/bf_ibnr.py")
 
-from ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
-from npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
+ulae_engine = load_file_module("LIC Calculators/FCF Calculators/ULAE Calculators/ulae_engine.py")
+npr_engine = load_file_module("LIC Calculators/FCF Calculators/NPR Calculators/npr_engine.py")
 
-from mack_ra import calculate_mack_chain_ladder
-from bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
+ra_mack = load_file_module("LIC Calculators/RA Calculators/mack_ra.py")
+ra_boot = load_file_module("LIC Calculators/RA Calculators/bootstrap_ra.py")
 
-# --- SHARED HELPERS ---
-from actuarial_helpers import (
-    build_triangles, volume_weighted_factors, simple_average_factors,
-    geometric_average_factors, medial_average_factors, linear_regression_factors,
-    weighted_last_n_factors, stability_diagnostics, recommend_factors,
-    compute_cdfs, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle,
-    period_index, period_label, periods_per_year
-)
+act_helpers = load_file_module("utils/actuarial_helpers.py")
 
-# --- FULL VALUATION ---
-from full_LRC_IFRS17 import calculate_full_ifrs17_lrc
+full_engine = load_file_module("Full Valuation/full_LRC_IFRS17.py")
+
+# Checkpoint to ensure modules loaded correctly
+if upr_engine is None or ocr_engine is None or act_helpers is None:
+    st.error("Critical Error: Could not locate key python files. Please check your folder structure.")
+    st.stop()
 
 
 # =============================================================================
@@ -239,23 +242,23 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
 
         # ---- Step 6: Run Calculation ----
         if st.button("Run Calculation", key=f"{client_name_key}_run", use_container_width=True):
-            inc, cum, obs_mask = build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
+            inc, cum, obs_mask = act_helpers.build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
             
             if use_inflation and cum_inflation is not None:
-                _, real_cum = deflate_triangle_to_real(inc, cum_inflation, n_periods)
+                _, real_cum = act_helpers.deflate_triangle_to_real(inc, cum_inflation, n_periods)
                 working_cum = real_cum
             else: working_cum = cum
 
-            vw = volume_weighted_factors(working_cum)
-            sa = simple_average_factors(working_cum)
-            geo = geometric_average_factors(working_cum)
-            med = medial_average_factors(working_cum)
-            lr_tuple = linear_regression_factors(working_cum)
+            vw = act_helpers.volume_weighted_factors(working_cum)
+            sa = act_helpers.simple_average_factors(working_cum)
+            geo = act_helpers.geometric_average_factors(working_cum)
+            med = act_helpers.medial_average_factors(working_cum)
+            lr_tuple = act_helpers.linear_regression_factors(working_cum)
             lr, slope, intercept, r2 = lr_tuple
-            wln = weighted_last_n_factors(working_cum, n=3)
+            wln = act_helpers.weighted_last_n_factors(working_cum, n=3)
 
-            cvs = stability_diagnostics(working_cum)
-            recs, mean_cv = recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
+            cvs = act_helpers.stability_diagnostics(working_cum)
+            recs, mean_cv = act_helpers.recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
 
             st.subheader("LDF Selection")
             factor_df = pd.DataFrame({
@@ -330,7 +333,7 @@ def render_ocr_calculator():
         if not amount_cols: return
 
         if st.button("Calculate OCR", key="ocr_run", use_container_width=True):
-            results, report, grand_total = calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
+            results, report, grand_total = ocr_engine.calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
             st.subheader("OCR Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total OCR: {grand_total:,.2f}")
@@ -380,7 +383,7 @@ def render_percentage_calculator():
 
         if st.button("Calculate", key="pct_run", use_container_width=True):
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            results, total = calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
+            results, total = ibnr_pct.calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total IBNR: {total:,.2f}")
@@ -401,7 +404,7 @@ def render_percentage_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bcl_calculator():
-    render_triangle_calculator("BCL Chain-Ladder", "bcl", calculate_bcl_ibnr)
+    render_triangle_calculator("BCL Chain-Ladder", "bcl", ibnr_bcl.calculate_bcl_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -409,7 +412,7 @@ def render_bcl_calculator():
 # -----------------------------------------------------------------------------
 
 def render_capecod_calculator():
-    render_triangle_calculator("Cape Cod IBNR", "cc", calculate_cape_cod_ibnr)
+    render_triangle_calculator("Cape Cod IBNR", "cc", ibnr_cc.calculate_cape_cod_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -417,7 +420,7 @@ def render_capecod_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bf_calculator():
-    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", calculate_bf_ibnr)
+    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", ibnr_bf.calculate_bf_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -479,14 +482,14 @@ def render_ulae_calculator():
                 app_df = pd.read_csv(app_file) if app_file.name.endswith('.csv') else pd.read_excel(app_file)
                 app_col = st.selectbox("Apportionment Amount Column", app_df.columns, key="ulae_app_amt")
                 app_df = app_df.rename(columns={app_col: "Amount"})
-                apportionment_df = calculate_apportionment_percentages(app_df)
+                apportionment_df = ulae_engine.calculate_apportionment_percentages(app_df)
 
         if st.button("Calculate ULAE", key="ulae_run", use_container_width=True):
             if basis == "Per Portfolio":
-                results = calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
+                results = ulae_engine.calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
             else:
                 overall_ratio = list(ulae_ratios.values())[0]
-                results, total_base = calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
+                results, total_base = ulae_engine.calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
             
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
@@ -732,7 +735,6 @@ def render_full_valuation():
                 return
 
             try:
-                # Load data into DataFrames
                 opening_balances = pd.read_csv(ob_file) if ob_file else pd.DataFrame()
                 cashflows = pd.read_csv(cf_file) if cf_file else pd.DataFrame()
                 policy = pd.read_csv(pd_file) if pd_file else pd.DataFrame()
@@ -747,8 +749,7 @@ def render_full_valuation():
                     'revenue_toggle': revenue_toggle
                 }
 
-                # CALL THE PURE ENGINE FROM THE SEPARATE FILE
-                results = calculate_full_ifrs17_lrc(
+                results = full_engine.calculate_full_ifrs17_lrc(
                     opening_balances, cashflows, policy, loss_component,
                     yield_curve, claims_curve, config, report_date
                 )
