@@ -41,10 +41,13 @@ def _parse_dates(series):
 
 def _date_filter(df, col, from_date, to_date):
     """Filter dataframe by date column between from_date and to_date."""
-    fd = str(from_date)[:10]
-    td = str(to_date)[:10]
-    mask = df[col].dt.strftime('%Y-%m-%d')
-    return df[(mask >= fd) & (mask <= td)]
+    # FIX: Ensure the column is parsed into datetime BEFORE using .dt
+    if not pd.api.types.is_datetime64_any_dtype(df[col]):
+        df[col] = pd.to_datetime(df[col], errors='coerce')
+    
+    fd = pd.Timestamp(from_date)
+    td = pd.Timestamp(to_date)
+    return df[(df[col] >= fd) & (df[col] <= td)]
 
 
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="expanded")
