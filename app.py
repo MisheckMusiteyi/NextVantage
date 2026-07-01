@@ -16,7 +16,7 @@ import os
 import importlib
 
 # =============================================================================
-#  FIX IMPORT PATHS (Critical for folder names with spaces)
+#  FIX IMPORT PATHS
 # =============================================================================
 
 # Add current directory to path so Python finds everything
@@ -29,14 +29,13 @@ def safe_import(module_path):
     try:
         return importlib.import_module(module_path)
     except ModuleNotFoundError:
-        # Fallback logic if Python version or paths are weird
         return None
 
-# --- LRC CALCULATORS (Folders with spaces) ---
+# --- LRC CALCULATORS ---
 upr_engine = safe_import("LRC Calculators.upr_engine")
 loss_comp_engine = safe_import("LRC Calculators.loss_component_engine")
 
-# --- LIC CALCULATORS (Folders with spaces) ---
+# --- LIC CALCULATORS ---
 ocr_engine = safe_import("LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine")
 
 ibnr_pct = safe_import("LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr")
@@ -632,9 +631,7 @@ def render_ibnr_menu():
         ("BCL", "bcl_calculator"),
         ("Cape Cod", "capecod_calculator"),
         ("BF", "bf_calculator"),
-        ("Percentage", "percentage_calculator"),
-        ("ELR", "elr_calculator"),
-        ("ACPC", "acpc_calculator")
+        ("Percentage", "percentage_calculator")
     ]
     for i in range(0, len(methods), 3):
         cols = st.columns(3)
@@ -651,7 +648,7 @@ def render_risk_adjustment():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Risk Adjustment</h1><p>RA Methods</p></div>', unsafe_allow_html=True)
     cols = st.columns(4)
-    methods = [("Mack", "mack_calculator"), ("Bootstrap", "bootstrap_calculator"), ("VaR", "var_calculator"), ("Cost of Capital", "coc_calculator")]
+    methods = [("Mack", "mack_calculator"), ("Bootstrap", "bootstrap_calculator")]
     for i, (n, p) in enumerate(methods):
         with cols[i]:
             st.markdown(f'<div class="card"><h3>{n}</h3></div>', unsafe_allow_html=True)
@@ -773,7 +770,7 @@ def render_full_valuation():
 
 
 # =============================================================================
-#  MAIN ROUTER
+#  MAIN ROUTER (REMOVED SKIPPED PAGES TO PREVENT NAMERRORS)
 # =============================================================================
 
 page_renderers = {
@@ -792,12 +789,6 @@ page_renderers = {
     'npr_calculator': render_npr_calculator,
     'mack_calculator': render_mack_calculator,
     'bootstrap_calculator': render_bootstrap_calculator,
-    'elr_calculator': render_elr_calculator,
-    'acpc_calculator': render_acpc_calculator,
-    'var_calculator': render_var_calculator,
-    'coc_calculator': render_coc_calculator,
-    'upr_calculator': render_upr_calculator,
-    'loss_component': render_loss_component,
     'full_valuation': render_full_valuation,
 }
 
