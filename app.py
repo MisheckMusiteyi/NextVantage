@@ -13,49 +13,59 @@ import re
 from scipy import interpolate
 import sys
 import os
-import importlib
 
 # =============================================================================
-#  DYNAMIC IMPORTS (BYPASSES SYNTAX ERROR FOR SPACES IN FOLDER NAMES)
+#  ABSOLUTE PATH IMPORT SYSTEM (Works perfectly on Streamlit Cloud)
 # =============================================================================
 
-# Add current directory to path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+# 1. Add the root app directory
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
-# Dictionary to store our safely imported modules
-mods = {}
+# 2. Explicitly add every nested subfolder to sys.path (Fixes 'NoneType' on Cloud)
+sys.path.insert(0, os.path.join(BASE_DIR, "LRC Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "OCR Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "IBNR Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "ULAE Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "FCF Calculators", "NPR Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC Calculators", "RA Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "Full Valuation"))
+sys.path.insert(0, os.path.join(BASE_DIR, "utils"))
 
-# Helper to import modules safely
-def load_module(path):
-    try:
-        return importlib.import_module(path)
-    except ModuleNotFoundError:
-        return None
+# 3. Import everything directly (folders are now recognized)
+# --- LRC CALCULATORS ---
+from upr_engine import calculate_upr
+from loss_component_engine import calculate_loss_component
 
-# Load LRC Calculators
-mods['upr'] = load_module("LRC Calculators.upr_engine")
-mods['loss'] = load_module("LRC Calculators.loss_component_engine")
+# --- LIC CALCULATORS ---
+from ocr_engine import calculate_ocr
 
-# Load LIC FCF Calculators
-mods['ocr'] = load_module("LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine")
-mods['ibnr_pct'] = load_module("LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr")
-mods['ibnr_bcl'] = load_module("LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr")
-mods['ibnr_cc'] = load_module("LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr")
-mods['ibnr_bf'] = load_module("LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr")
-mods['ulae'] = load_module("LIC Calculators.FCF Calculators.ULAE Calculators.ulae_engine")
-mods['npr'] = load_module("LIC Calculators.FCF Calculators.NPR Calculators.npr_engine")
+from percentage_ibnr import calculate_percentage_ibnr
+from bcl_ibnr import calculate_bcl_ibnr
+from cape_cod_ibnr import calculate_cape_cod_ibnr
+from bf_ibnr import calculate_bf_ibnr
 
-# Load LIC RA Calculators
-mods['ra_mack'] = load_module("LIC Calculators.RA Calculators.mack_ra")
-mods['ra_boot'] = load_module("LIC Calculators.RA Calculators.bootstrap_ra")
+from ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
+from npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
 
-# Load Shared Helpers
-mods['helpers'] = load_module("utils.actuarial_helpers")
+from mack_ra import calculate_mack_chain_ladder
+from bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
 
-# Load Full Valuation
-mods['full'] = load_module("Full Valuation.full_LRC_IFRS17")
+# --- SHARED HELPERS ---
+from actuarial_helpers import (
+    build_triangles, volume_weighted_factors, simple_average_factors,
+    geometric_average_factors, medial_average_factors, linear_regression_factors,
+    weighted_last_n_factors, stability_diagnostics, recommend_factors,
+    compute_cdfs, project_ultimate, deflate_triangle_to_real,
+    reinflate_ibnr_per_ap, discount_completed_triangle,
+    period_index, period_label, periods_per_year
+)
+
+# --- FULL VALUATION ---
+from full_LRC_IFRS17 import calculate_full_ifrs17_lrc
 
 
 # =============================================================================
@@ -110,10 +120,6 @@ def map_columns(df, required_fields, file_label):
 # =============================================================================
 
 def render_triangle_calculator(title, client_name_key, engine_callback):
-    """
-    Generic UI for BCL, Cape Cod, and BF.
-    engine_callback is a function that takes (cum_triangle, obs_mask, factors, from_dt, grain, ...) and returns results.
-    """
     show_breadcrumb()
     st.markdown(f'<div class="hero"><h1>{title}</h1></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
@@ -129,7 +135,6 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
         return
 
     try:
-        # Load and preview
         df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(5), use_container_width=True)
@@ -160,25 +165,21 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
         to_dt = pd.to_datetime(to_date)
         df = df[(df[loss_col] >= from_dt) & (df[loss_col] <= to_dt)].copy()
 
-        # Missing values
         missing_rows = df[[loss_col, report_col, amt_col]].isnull().any(axis=1)
         if missing_rows.any():
             st.error(f"❌ {missing_rows.sum()} rows have missing values.")
             st.stop()
         else: st.success("✅ No missing values.")
 
-        # Date consistency
         inconsistent_dates = df[df[loss_col] > df[report_col]]
         if not inconsistent_dates.empty:
             st.error(f"❌ {len(inconsistent_dates)} rows have Loss Date > Report Date.")
             st.stop()
         else: st.success("✅ Date consistency check passed.")
 
-        # Duplicates
         before = len(df); df = df.drop_duplicates()
         if len(df) < before: st.warning(f"⚠️ {before - len(df)} duplicate rows removed.")
 
-        # Calculate periods
         g_map = {"Yearly": "Y", "Half-Yearly": "H", "Quarterly": "Q", "Monthly": "M"}
         g_code = g_map[grain]
         ppy = {"Y":1, "H":2, "Q":4, "M":12}[g_code]
@@ -238,28 +239,24 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
 
         # ---- Step 6: Run Calculation ----
         if st.button("Run Calculation", key=f"{client_name_key}_run", use_container_width=True):
-            # Build triangle
-            inc, cum, obs_mask = mods['helpers'].build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
+            inc, cum, obs_mask = build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
             
-            # Inflation
             if use_inflation and cum_inflation is not None:
-                _, real_cum = mods['helpers'].deflate_triangle_to_real(inc, cum_inflation, n_periods)
+                _, real_cum = deflate_triangle_to_real(inc, cum_inflation, n_periods)
                 working_cum = real_cum
             else: working_cum = cum
 
-            # Calculate all LDFs
-            vw = mods['helpers'].volume_weighted_factors(working_cum)
-            sa = mods['helpers'].simple_average_factors(working_cum)
-            geo = mods['helpers'].geometric_average_factors(working_cum)
-            med = mods['helpers'].medial_average_factors(working_cum)
-            lr_tuple = mods['helpers'].linear_regression_factors(working_cum)
+            vw = volume_weighted_factors(working_cum)
+            sa = simple_average_factors(working_cum)
+            geo = geometric_average_factors(working_cum)
+            med = medial_average_factors(working_cum)
+            lr_tuple = linear_regression_factors(working_cum)
             lr, slope, intercept, r2 = lr_tuple
-            wln = mods['helpers'].weighted_last_n_factors(working_cum, n=3)
+            wln = weighted_last_n_factors(working_cum, n=3)
 
-            cvs = mods['helpers'].stability_diagnostics(working_cum)
-            recs, mean_cv = mods['helpers'].recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
+            cvs = stability_diagnostics(working_cum)
+            recs, mean_cv = recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
 
-            # Display LDF Selection
             st.subheader("LDF Selection")
             factor_df = pd.DataFrame({
                 "Dev Period": range(1, len(vw)+1),
@@ -282,15 +279,12 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
             elif selected_method == "Linear Regression": chosen = lr
             elif selected_method == "Weighted Last 3": chosen = wln
 
-            # Call the specific engine
             results = engine_callback(working_cum, chosen, from_dt, g_code)
 
-            # Display results
             st.subheader("Results")
             st.dataframe(results['results_df'], use_container_width=True)
             st.write(f"**Total IBNR: {results['total_ibnr']:,.2f}**")
 
-            # Export
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as w:
                 results['results_df'].to_excel(w, index=False, sheet_name="IBNR_Results")
@@ -336,7 +330,7 @@ def render_ocr_calculator():
         if not amount_cols: return
 
         if st.button("Calculate OCR", key="ocr_run", use_container_width=True):
-            results, report, grand_total = mods['ocr'].calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
+            results, report, grand_total = calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
             st.subheader("OCR Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total OCR: {grand_total:,.2f}")
@@ -386,7 +380,7 @@ def render_percentage_calculator():
 
         if st.button("Calculate", key="pct_run", use_container_width=True):
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            results, total = mods['ibnr_pct'].calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
+            results, total = calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total IBNR: {total:,.2f}")
@@ -407,7 +401,7 @@ def render_percentage_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bcl_calculator():
-    render_triangle_calculator("BCL Chain-Ladder", "bcl", mods['ibnr_bcl'].calculate_bcl_ibnr)
+    render_triangle_calculator("BCL Chain-Ladder", "bcl", calculate_bcl_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -415,7 +409,7 @@ def render_bcl_calculator():
 # -----------------------------------------------------------------------------
 
 def render_capecod_calculator():
-    render_triangle_calculator("Cape Cod IBNR", "cc", mods['ibnr_cc'].calculate_cape_cod_ibnr)
+    render_triangle_calculator("Cape Cod IBNR", "cc", calculate_cape_cod_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -423,7 +417,7 @@ def render_capecod_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bf_calculator():
-    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", mods['ibnr_bf'].calculate_bf_ibnr)
+    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", calculate_bf_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -452,7 +446,6 @@ def render_ulae_calculator():
         st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
         
-        # Map columns
         portfolio_col = st.selectbox("Portfolio Column", cols, key="ulae_port")
         if is_detailed:
             ocr_col = st.selectbox("OCR Column", [c for c in cols if c != portfolio_col], key="ulae_ocr")
@@ -486,14 +479,14 @@ def render_ulae_calculator():
                 app_df = pd.read_csv(app_file) if app_file.name.endswith('.csv') else pd.read_excel(app_file)
                 app_col = st.selectbox("Apportionment Amount Column", app_df.columns, key="ulae_app_amt")
                 app_df = app_df.rename(columns={app_col: "Amount"})
-                apportionment_df = mods['ulae'].calculate_apportionment_percentages(app_df)
+                apportionment_df = calculate_apportionment_percentages(app_df)
 
         if st.button("Calculate ULAE", key="ulae_run", use_container_width=True):
             if basis == "Per Portfolio":
-                results = mods['ulae'].calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
+                results = calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
             else:
                 overall_ratio = list(ulae_ratios.values())[0]
-                results, total_base = mods['ulae'].calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
+                results, total_base = calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
             
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
@@ -530,7 +523,6 @@ def render_npr_calculator():
             st.subheader("LIC Data Preview")
             st.dataframe(df_lic.head(5))
 
-            # Simplified mapping for demo
             st.info("Full column mapping and calculation logic is available in the `npr_engine.py` file. This UI is a placeholder.")
         except Exception as e: st.error(f"Error: {e}")
 
@@ -756,7 +748,7 @@ def render_full_valuation():
                 }
 
                 # CALL THE PURE ENGINE FROM THE SEPARATE FILE
-                results = mods['full'].calculate_full_ifrs17_lrc(
+                results = calculate_full_ifrs17_lrc(
                     opening_balances, cashflows, policy, loss_component,
                     yield_curve, claims_curve, config, report_date
                 )
