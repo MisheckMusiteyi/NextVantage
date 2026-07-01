@@ -32,6 +32,21 @@ from datetime import date, datetime
 import re
 from scipy import interpolate
 
+def _parse_dates(series):
+    """Safely parse any column to datetime regardless of source dtype."""
+    try:
+        return pd.to_datetime(series.astype(str), errors='coerce')
+    except Exception:
+        return pd.to_datetime(series, errors='coerce')
+
+def _date_filter(df, col, from_date, to_date):
+    """Filter dataframe by date column between from_date and to_date."""
+    fd = str(from_date)[:10]
+    td = str(to_date)[:10]
+    mask = df[col].dt.strftime('%Y-%m-%d')
+    return df[(mask >= fd) & (mask <= td)]
+
+
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="expanded")
 
 # =============================================================================
@@ -241,8 +256,8 @@ def render_upr_calculator():
             selected_value_cols = st.multiselect("Numeric columns:", options=numeric_columns, default=numeric_columns[:min(4,len(numeric_columns))], key="upr_vc")
             if not selected_value_cols: st.info("Please select at least one Numeric column."); return
             df_check = df.rename(columns={start_date_col:'Start_Date', end_date_col:'End_Date'})
-            df_check['Start_Date'] = pd.to_datetime(df_check['Start_Date'], errors='coerce')
-            df_check['End_Date'] = pd.to_datetime(df_check['End_Date'], errors='coerce')
+            df_check['Start_Date'] = pd.to_datetime(df_check['Start_Date'], errors='coerce').astype('datetime64[ns]')
+            df_check['End_Date'] = pd.to_datetime(df_check['End_Date'], errors='coerce').astype('datetime64[ns]')
             bad = df_check.dropna(subset=['Start_Date','End_Date']); bad = bad[bad['End_Date'] <= bad['Start_Date']]
             if len(bad) > 0: st.error(f"{len(bad)} rows have End_Date ≤ Start_Date."); return
             df_processed = df_check.dropna(subset=['Start_Date','End_Date']); df_processed = df_processed[df_processed['End_Date'] > df_processed['Start_Date']]
@@ -251,7 +266,7 @@ def render_upr_calculator():
             df_processed = df_processed[df_processed["Duration"] > 0]
             if df_processed.empty: st.error("No valid policies after date filtering."); return
             if st.button("Calculate UPR", key="upr_calc", width='stretch'):
-                cond = [np.datetime64(str(valuation_date.date()), 'ns') < df_processed["Start_Date"], np.datetime64(str(valuation_date.date()), 'ns') > df_processed["End_Date"], (np.datetime64(str(valuation_date.date()), 'ns') <= df_processed["End_Date"]) & (np.datetime64(str(valuation_date.date()), 'ns') >= df_processed["Start_Date"])]
+                cond = [valuation_date < df_processed["Start_Date"], valuation_date > df_processed["End_Date"], (valuation_date <= df_processed["End_Date"]) & (valuation_date >= df_processed["Start_Date"])]
                 if method == "365th": t=df_processed["Duration"]; r=(df_processed["End_Date"]-valuation_date).dt.days; ch=[1,0,r/t]
                 elif method == "24th": iv=365.25/24; t=df_processed["Duration"]/iv; r=(df_processed["End_Date"]-valuation_date).dt.days/iv; ch=[1,0,r/t]
                 else: iv=365.25/8; t=df_processed["Duration"]/iv; r=(df_processed["End_Date"]-valuation_date).dt.days/iv; ch=[1,0,r/t]
@@ -338,12 +353,12 @@ def render_bcl_calculator():
         with c3: lob_col = st.selectbox("Line of Business", cols, key="bcl_lob")
         with c4: amt_col = st.selectbox("Claim Amount", cols, key="bcl_amt")
 
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
-        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce')
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce').astype('datetime64[ns]')
+        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce').astype('datetime64[ns]')
         df[amt_col]  = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
-        df = df[(df[loss_col]>=from_dt.to_numpy())&(df[loss_col]<=to_dt.to_numpy())]
+        df = _date_filter(df, loss_col, from_date, to_date)
 
         def ap(d):
             if grain_code=="Y": return d.year - from_dt.year
@@ -467,12 +482,12 @@ def render_capecod_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="cc_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="cc_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="cc_amt")
-        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce')
-        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
-        df=df[(df[loss_col]>=from_dt.to_numpy())&(df[loss_col]<=to_dt.to_numpy())]
+        df=_date_filter(df, loss_col, from_date, to_date)
         if st.button("Calculate Cape Cod IBNR",key="cc_run",width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique()); rows=[]
             for lob in lobs:
@@ -567,12 +582,12 @@ def render_bf_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="bf_amt")
-        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce')
-        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
-        df=df[(df[loss_col]>=from_dt.to_numpy())&(df[loss_col]<=to_dt.to_numpy())]
+        df=_date_filter(df, loss_col, from_date, to_date)
         lobs=sorted(df[lob_col].dropna().unique())
         st.markdown("**ELR per Portfolio (%):**")
         elr_cols=st.columns(min(len(lobs),4))
@@ -1283,26 +1298,26 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- UPR ----
                 if calc_upr and upr_data is not None:
                     df_upr = upr_data.copy()
-                    df_upr['Start_Date'] = pd.to_datetime(df_upr['Start_Date'], errors='coerce')
-                    df_upr['End_Date'] = pd.to_datetime(df_upr['End_Date'], errors='coerce')
+                    df_upr['Start_Date'] = pd.to_datetime(df_upr['Start_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_upr['End_Date'] = pd.to_datetime(df_upr['End_Date'], errors='coerce').astype('datetime64[ns]')
                     df_upr['Premium'] = pd.to_numeric(df_upr['Gross_Written_Premium'], errors='coerce')
                     df_upr = df_upr.dropna(subset=['Start_Date','End_Date'])
                     df_upr = df_upr[df_upr['End_Date'] > df_upr['Start_Date']]
                     df_upr['Duration'] = (df_upr['End_Date'] - df_upr['Start_Date']).dt.days
                     df_upr['Remaining'] = (df_upr['End_Date'] - val_date).dt.days
                     if upr_method == "365th":
-                        df_upr['Unearned'] = np.where(val_date.to_numpy() < df_upr['Start_Date'], 1,
-                            np.where(val_date.to_numpy() > df_upr['End_Date'], 0,
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
                             np.clip(df_upr['Remaining'] / df_upr['Duration'], 0, 1)))
                     elif upr_method == "24th":
                         iv = 365.25/24
-                        df_upr['Unearned'] = np.where(val_date.to_numpy() < df_upr['Start_Date'], 1,
-                            np.where(val_date.to_numpy() > df_upr['End_Date'], 0,
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
                             np.clip((df_upr['End_Date']-val_date).dt.days/iv / (df_upr['Duration']/iv), 0, 1)))
                     else:
                         iv = 365.25/8
-                        df_upr['Unearned'] = np.where(val_date.to_numpy() < df_upr['Start_Date'], 1,
-                            np.where(val_date.to_numpy() > df_upr['End_Date'], 0,
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
                             np.clip((df_upr['End_Date']-val_date).dt.days/iv / (df_upr['Duration']/iv), 0, 1)))
                     df_upr['UPR'] = df_upr['Unearned'] * df_upr['Premium']
                     upr_result = df_upr.groupby('Line_of_Business')['UPR'].sum().reset_index()
@@ -1322,11 +1337,11 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- IBNR ----
                 if calc_ibnr and claims_data is not None:
                     df_cl = claims_data.copy()
-                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce')
-                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce')
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
                     df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
                     df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
-                    df_cl = df_cl[(df_cl['Loss_Date']>=from_dt.to_numpy())&(df_cl['Loss_Date']<=to_dt.to_numpy())]
+                    df_cl = _date_filter(df_cl, 'Loss_Date', from_dt, to_dt)
 
                     ibnr_rows = []
                     for lob in portfolios:
@@ -1438,11 +1453,11 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- RA (Bootstrap) ----
                 if calc_ra and ra_method == "Bootstrap" and claims_data is not None:
                     df_cl = claims_data.copy()
-                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce')
-                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce')
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
                     df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
                     df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
-                    df_cl = df_cl[(df_cl['Loss_Date']>=from_dt.to_numpy())&(df_cl['Loss_Date']<=to_dt.to_numpy())]
+                    df_cl = _date_filter(df_cl, 'Loss_Date', from_dt, to_dt)
                     ra_rows = []
                     for lob in portfolios:
                         lob_data = df_cl[df_cl['Line_of_Business']==lob].copy()
@@ -1807,7 +1822,7 @@ def _render_full_ifrs17_lrc_branch(report_date, report_client):
             pol_df['End_Date'] = pd.to_datetime(pol_df['End_Date'], errors='coerce')
             pol_df['Written_Premium'] = pd.to_numeric(pol_df['Written_Premium'], errors='coerce').fillna(0)
             pol_df = pol_df.dropna(subset=['Start_Date','End_Date'])
-            pol_df = pol_df[pol_df['End_Date'].dt.date > pol_df['Start_Date'].dt.date]
+            pol_df = pol_df[pol_df['End_Date'] > pol_df['Start_Date']]
             ifrs17_data['policy_data'] = pol_df
             st.success("Policy data mapped.")
         except Exception as e: st.error(f"Error: {e}")
@@ -1897,7 +1912,7 @@ def _render_full_ifrs17_lrc_branch(report_date, report_client):
             # Per-policy day counts
             policy_df['Policy_Days'] = (policy_df['End_Date'] - policy_df['Start_Date']).dt.days
             policy_df = policy_df[policy_df['Policy_Days'] > 0]
-            policy_df['Passed_Days'] = (pd.Timestamp(str(val_date)) - policy_df['Start_Date']).dt.days
+            policy_df['Passed_Days'] = (val_date - policy_df['Start_Date']).dt.days
             policy_df['Passed_Days'] = np.clip(policy_df['Passed_Days'], 0, policy_df['Policy_Days'])
             policy_df['Remaining_Days'] = policy_df['Policy_Days'] - policy_df['Passed_Days']
             policy_df['UPR'] = policy_df['Written_Premium'] * (policy_df['Remaining_Days'] / policy_df['Policy_Days'])
