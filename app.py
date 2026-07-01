@@ -172,7 +172,7 @@ def render_ibnr_menu():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>IBNR Methods</h1></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator"), ("ELR", "elr_calculator"), ("ACPC", "acpc_calculator")]
+    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator")]
     for i in range(0, len(methods), 3):
         cols = st.columns(3)
         for j in range(3):
@@ -189,7 +189,7 @@ def render_risk_adjustment():
     st.markdown('<div class="hero"><h1>Risk Adjustment</h1><p>RA Methods</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
     cols = st.columns(4)
-    methods = [("Mack", "mack_calculator"), ("Bootstrap", "bootstrap_calculator"), ("VaR", "var_calculator"), ("Cost of Capital", "coc_calculator")]
+    methods = [("Mack", "mack_calculator"), ("Bootstrap", "bootstrap_calculator")]
     for i, (n, p) in enumerate(methods):
         with cols[i]:
             st.markdown(f'<div class="card"><h3>{n}</h3></div>', unsafe_allow_html=True)
@@ -640,130 +640,6 @@ def render_bf_calculator():
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
-def render_elr_calculator():
-    show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Expected Loss Ratio (ELR) IBNR</h1><p>Pure ELR method — IBNR = Premium × ELR × % Unpaid</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    c1,c2=st.columns(2)
-    with c1: client_name=st.text_input("Client","Client",key="elr_cn").strip()
-    with c2: from_date=st.date_input("From Date",date(2020,1,1),key="elr_fd")
-    claims_file=st.file_uploader("Upload claims file",type=["csv","xlsx","xls"],key="elr_cf")
-    prem_file=st.file_uploader("Upload premiums file",type=["csv","xlsx","xls"],key="elr_pf")
-    if claims_file is None:
-        st.info("Upload claims file to begin."); back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods']); return
-    try:
-        df=pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
-        df.columns=df.columns.astype(str).str.strip()
-        cols=df.columns.tolist()
-        c1,c2,c3,c4=st.columns(4)
-        with c1: loss_col=st.selectbox("Loss Date",cols,key="elr_ld")
-        with c2: rep_col=st.selectbox("Report Date",cols,key="elr_rd")
-        with c3: lob_col=st.selectbox("LOB",cols,key="elr_lob")
-        with c4: amt_col=st.selectbox("Amount",cols,key="elr_amt")
-        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce')
-        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
-        df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
-        df=df.dropna(subset=[loss_col,rep_col])
-        from_dt=pd.to_datetime(from_date)
-        lobs=sorted(df[lob_col].dropna().unique())
-        st.markdown("**ELR per Portfolio (%):**")
-        ecols=st.columns(min(len(lobs),4)); elr_dict={}
-        for i,lob in enumerate(lobs):
-            with ecols[i%4]: elr_dict[lob]=st.number_input(f"ELR {lob}",0.0,200.0,70.0,1.0,key=f"elr_v_{lob}")/100
-        prem_data=None
-        if prem_file is not None:
-            prem_data=pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
-            prem_data.columns=prem_data.columns.astype(str).str.strip()
-        if st.button("Calculate ELR IBNR",key="elr_run",width='stretch'):
-            rows=[]
-            for lob in lobs:
-                sub=df[df[lob_col]==lob].copy()
-                sub['AP']=sub[loss_col].apply(lambda d:d.year-from_dt.year)
-                sub['DP']=sub.apply(lambda r:max(0,r[rep_col].year-r[loss_col].year),axis=1)
-                n=max(sub['AP'].max()+1,1); sub=sub[(sub['AP']>=0)&(sub['AP']<n)]; sub['DP']=sub['DP'].clip(0,n-1)
-                pivot=sub.pivot_table(index='AP',columns='DP',values=amt_col,aggfunc='sum').fillna(0)
-                for i in range(n):
-                    if i not in pivot.index: pivot.loc[i]=0.0
-                for j in range(n):
-                    if j not in pivot.columns: pivot[j]=0.0
-                wc=pivot.sort_index()[sorted(pivot.columns)].astype(float).cumsum(axis=1)
-                n_ay,n_d=wc.shape; facs=[]
-                for j in range(n_d-1):
-                    num,den=0.0,0.0
-                    for i in range(n_ay):
-                        if i+j+1<n_ay:
-                            c=wc.iloc[i,j]; nxt=wc.iloc[i,j+1]
-                            if c>0: num+=nxt; den+=c
-                    facs.append(num/den if den>0 else 1.0)
-                cdfs=[]; run=1.0
-                for f in reversed(facs): run*=f; cdfs.insert(0,run)
-                pct_unpaid=[1-(1/c) if c>0 else 0 for c in cdfs]
-                prems={}
-                if prem_data is not None and lob in prem_data.columns:
-                    vals=pd.to_numeric(prem_data[lob],errors='coerce').fillna(0).tolist()
-                    for i,v in enumerate(vals): prems[i]=v
-                elr=elr_dict.get(lob,0.7); total_ibnr=0.0
-                for i in range(n_ay):
-                    lo=-1
-                    for j in range(n_d-1,-1,-1):
-                        if i+j<n_ay: lo=j; break
-                    if lo<0: continue
-                    prem_i=prems.get(i,0); pct_u=pct_unpaid[lo] if lo<len(pct_unpaid) else 0
-                    ibnr=prem_i*elr*pct_u; total_ibnr+=ibnr
-                rows.append({'LOB':lob,'Total_Premium':sum(prems.values()),'ELR':elr,'ELR_IBNR':total_ibnr})
-            res=pd.DataFrame(rows); disp=res.copy()
-            disp['ELR']=disp['ELR'].apply(lambda x:f"{x:.2%}")
-            for c in ['Total_Premium','ELR_IBNR']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
-            st.dataframe(disp,width='stretch',hide_index=True)
-            output=BytesIO()
-            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='ELR_IBNR')
-            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
-            st.download_button("⬇ Download ELR Results",data=output,file_name=f"{sc}_ELR_IBNR.xlsx",key="elr_dl")
-    except Exception as e: st.error(f"Error: {e}")
-    back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
-
-def render_acpc_calculator():
-    show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Average Cost Per Claim (ACPC) IBNR</h1><p>IBNR = Estimated IBNER claims × Average cost per claim</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    c1,c2=st.columns(2)
-    with c1: client_name=st.text_input("Client","Client",key="acpc_cn").strip()
-    st.info("Upload a file with columns: LOB | Reported_Claims | Average_Cost_Per_Claim | Pct_IBNR_Claims")
-    uploaded=st.file_uploader("Upload ACPC data",type=["csv","xlsx","xls"],key="acpc_f")
-    if uploaded is None:
-        back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods']); return
-    try:
-        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
-        df.columns=df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5),width='stretch')
-        cols=df.columns.tolist()
-        c1,c2,c3,c4=st.columns(4)
-        with c1: lob_col=st.selectbox("LOB",cols,key="acpc_lob")
-        with c2: rep_col=st.selectbox("Reported Claims Count",cols,key="acpc_rc")
-        with c3: cost_col=st.selectbox("Avg Cost Per Claim",cols,key="acpc_cc")
-        with c4: pct_col=st.selectbox("Pct IBNR Claims",cols,key="acpc_pc")
-        if st.button("Calculate ACPC IBNR",key="acpc_run",width='stretch'):
-            df[rep_col]=pd.to_numeric(df[rep_col],errors='coerce').fillna(0)
-            df[cost_col]=pd.to_numeric(df[cost_col],errors='coerce').fillna(0)
-            df[pct_col]=pd.to_numeric(df[pct_col],errors='coerce').fillna(0)
-            df['IBNR_Claims']=df[rep_col]*df[pct_col]/100
-            df['IBNR']=df['IBNR_Claims']*df[cost_col]
-            summ=df.groupby(lob_col)[['IBNR_Claims','IBNR']].sum().reset_index()
-            summ['Avg_Cost']=df.groupby(lob_col)[cost_col].mean().values
-            st.subheader("ACPC IBNR Summary")
-            disp=summ.copy()
-            disp['IBNR_Claims']=disp['IBNR_Claims'].apply(lambda x:f"{x:,.1f}")
-            disp['Avg_Cost']=disp['Avg_Cost'].apply(lambda x:f"{x:,.2f}")
-            disp['IBNR']=disp['IBNR'].apply(lambda x:f"{x:,.2f}")
-            st.dataframe(disp,width='stretch',hide_index=True)
-            st.metric("Total IBNR",f"{summ['IBNR'].sum():,.2f}")
-            output=BytesIO()
-            with pd.ExcelWriter(output,engine='openpyxl') as w: summ.to_excel(w,index=False,sheet_name='ACPC_IBNR')
-            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
-            st.download_button("⬇ Download ACPC Results",data=output,file_name=f"{sc}_ACPC_IBNR.xlsx",key="acpc_dl")
-    except Exception as e: st.error(f"Error: {e}")
-    back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
-
 def render_ulae_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>ULAE Calculator</h1><p>Paid-to-Paid method: ULAE = ratio × (0.5×OCR + IBNR)</p></div>', unsafe_allow_html=True)
@@ -1072,104 +948,6 @@ def render_bootstrap_calculator():
     except Exception as e:
         st.error(f"Error: {e}")
         import traceback; st.write(traceback.format_exc())
-    back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
-
-def render_var_calculator():
-    show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Value at Risk (VaR) — Risk Adjustment</h1><p>Parametric VaR: RA = μ × (e^(z×σ) − 1) assuming log-normal reserve distribution</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    st.info("Input your best estimate IBNR and a coefficient of variation (CV) per portfolio. The VaR RA is calculated assuming a log-normal distribution of reserves.")
-    c1,c2=st.columns(2)
-    with c1: client_name=st.text_input("Client","Client",key="var_cn").strip()
-    with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.9,75.0,1.0,key="var_cl")/100
-    from scipy.stats import norm
-    z=norm.ppf(confidence)
-    uploaded=st.file_uploader("Upload data (LOB | Best_Estimate_IBNR | CV_%)",type=["csv","xlsx","xls"],key="var_f")
-    if uploaded is None:
-        back_button('risk_adjustment',['Home','LIC','Risk Adjustment']); return
-    try:
-        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
-        df.columns=df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5),width='stretch')
-        cols=df.columns.tolist()
-        c1,c2,c3=st.columns(3)
-        with c1: lob_col=st.selectbox("LOB",cols,key="var_lob")
-        with c2: be_col=st.selectbox("Best Estimate IBNR",cols,key="var_be")
-        with c3: cv_col=st.selectbox("CV % (e.g. 15 = 15%)",cols,key="var_cv")
-        if st.button("Calculate VaR RA",key="var_run",width='stretch'):
-            df[be_col]=pd.to_numeric(df[be_col],errors='coerce').fillna(0)
-            df[cv_col]=pd.to_numeric(df[cv_col],errors='coerce').fillna(0)/100
-            # Log-normal: sigma = sqrt(ln(1+CV^2)), mu = ln(BE) - sigma^2/2
-            df['sigma']=np.sqrt(np.log(1+df[cv_col]**2))
-            df['VaR_Pctl']=df[be_col]*np.exp(z*df['sigma'])
-            df['RA']=np.maximum(df['VaR_Pctl']-df[be_col],0)
-            df['LIC']=df[be_col]+df['RA']
-            res=df[[lob_col,be_col,cv_col,'VaR_Pctl','RA','LIC']].copy()
-            st.subheader(f"VaR RA @ {confidence*100:.0f}%")
-            disp=res.copy()
-            disp[cv_col]=disp[cv_col].apply(lambda x:f"{x:.2%}")
-            for c in [be_col,'VaR_Pctl','RA','LIC']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
-            st.dataframe(disp,width='stretch',hide_index=True)
-            c1,c2,c3=st.columns(3)
-            with c1: st.metric("Total BE IBNR",f"{df[be_col].sum():,.2f}")
-            with c2: st.metric("Total RA",f"{df['RA'].sum():,.2f}")
-            with c3: st.metric("Total LIC",f"{df['LIC'].sum():,.2f}")
-            output=BytesIO()
-            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='VaR_RA')
-            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
-            st.download_button("⬇ Download VaR Results",data=output,file_name=f"{sc}_VaR_RA.xlsx",key="var_dl")
-    except Exception as e: st.error(f"Error: {e}")
-    back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
-
-def render_coc_calculator():
-    show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Cost of Capital — Risk Adjustment</h1><p>RA = Required Capital × Cost of Capital Rate × Duration. RA compensates for the cost of holding risk capital.</p></div>', unsafe_allow_html=True)
-    st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    c1,c2,c3=st.columns(3)
-    with c1: client_name=st.text_input("Client","Client",key="coc_cn").strip()
-    with c2: coc_rate=st.number_input("Cost of Capital Rate (%)",0.0,30.0,6.0,0.5,key="coc_rt")/100
-    with c3: default_duration=st.number_input("Default Duration (years)",0.1,20.0,2.0,0.1,key="coc_dur")
-    uploaded=st.file_uploader("Upload data (LOB | IBNR | SCR_Ratio_% | Duration_Years)",type=["csv","xlsx","xls"],key="coc_f")
-    st.info("SCR_Ratio is the required capital as % of IBNR (e.g. 15 = 15%). Duration_Years is optional — defaults to value above if not provided.")
-    if uploaded is None:
-        back_button('risk_adjustment',['Home','LIC','Risk Adjustment']); return
-    try:
-        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
-        df.columns=df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5),width='stretch')
-        cols=df.columns.tolist()
-        c1,c2,c3,c4=st.columns(4)
-        with c1: lob_col=st.selectbox("LOB",cols,key="coc_lob")
-        with c2: ibnr_col=st.selectbox("IBNR",cols,key="coc_ibnr")
-        with c3: scr_col=st.selectbox("SCR Ratio %",cols,key="coc_scr")
-        dur_col_opts=["Use default"]+cols
-        with c4: dur_col=st.selectbox("Duration Years (optional)",dur_col_opts,key="coc_dcol")
-        if st.button("Calculate CoC RA",key="coc_run",width='stretch'):
-            df[ibnr_col]=pd.to_numeric(df[ibnr_col],errors='coerce').fillna(0)
-            df[scr_col]=pd.to_numeric(df[scr_col],errors='coerce').fillna(0)/100
-            if dur_col!="Use default" and dur_col in df.columns:
-                df['Duration']=pd.to_numeric(df[dur_col],errors='coerce').fillna(default_duration)
-            else:
-                df['Duration']=default_duration
-            df['Required_Capital']=df[ibnr_col]*df[scr_col]
-            df['RA']=df['Required_Capital']*coc_rate*df['Duration']
-            df['LIC']=df[ibnr_col]+df['RA']
-            res=df[[lob_col,ibnr_col,scr_col,'Required_Capital','Duration','RA','LIC']].copy()
-            st.subheader("Cost of Capital RA")
-            disp=res.copy()
-            disp[scr_col]=disp[scr_col].apply(lambda x:f"{x:.2%}")
-            disp['Duration']=disp['Duration'].apply(lambda x:f"{x:.2f}")
-            for c in [ibnr_col,'Required_Capital','RA','LIC']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
-            st.dataframe(disp,width='stretch',hide_index=True)
-            c1,c2,c3=st.columns(3)
-            with c1: st.metric("Total IBNR",f"{df[ibnr_col].sum():,.2f}")
-            with c2: st.metric("Total RA",f"{df['RA'].sum():,.2f}")
-            with c3: st.metric("Total LIC",f"{df['LIC'].sum():,.2f}")
-            output=BytesIO()
-            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='CoC_RA')
-            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
-            st.download_button("⬇ Download CoC Results",data=output,file_name=f"{sc}_CoC_RA.xlsx",key="coc_dl")
-    except Exception as e: st.error(f"Error: {e}")
     back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
 
 def render_loss_component():
@@ -2359,14 +2137,10 @@ page_renderers = {
     'bcl_calculator': render_bcl_calculator,
     'capecod_calculator': render_capecod_calculator,
     'bf_calculator': render_bf_calculator,
-    'elr_calculator': render_elr_calculator,
-    'acpc_calculator': render_acpc_calculator,
     'ulae_calculator': render_ulae_calculator,
     'npr_calculator': render_npr_calculator,
     'mack_calculator': render_mack_calculator,
     'bootstrap_calculator': render_bootstrap_calculator,
-    'var_calculator': render_var_calculator,
-    'coc_calculator': render_coc_calculator,
     'loss_component': render_loss_component,
 }
 
