@@ -10,47 +10,51 @@ import numpy as np
 from io import BytesIO
 from datetime import date, datetime
 import re
-from scipy import interpolate  # <-- Added for Inflation/Discounting interpolation
+from scipy import interpolate
+import sys
+import os
+import importlib
 
 # =============================================================================
-#  IMPORT PURE ENGINES FROM LIC CALCULATORS FOLDERS
+#  FIX IMPORT PATHS (Critical for folder names with spaces)
 # =============================================================================
 
-# UPR
-from LRC_Calculators.upr_engine import calculate_upr
+# Add current directory to path so Python finds everything
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
 
-# Loss Component
-from LRC_Calculators.loss_component_engine import calculate_loss_component
+# Helper to safely import modules with spaces in folder names
+def safe_import(module_path):
+    try:
+        return importlib.import_module(module_path)
+    except ModuleNotFoundError:
+        # Fallback logic if Python version or paths are weird
+        return None
 
-# OCR
-from LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine import calculate_ocr
+# --- LRC CALCULATORS (Folders with spaces) ---
+upr_engine = safe_import("LRC Calculators.upr_engine")
+loss_comp_engine = safe_import("LRC Calculators.loss_component_engine")
 
-# IBNR
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr import calculate_percentage_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr import calculate_bcl_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr import calculate_bf_ibnr
+# --- LIC CALCULATORS (Folders with spaces) ---
+ocr_engine = safe_import("LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine")
 
-# ULAE & NPR
-from LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
-from LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
+ibnr_pct = safe_import("LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr")
+ibnr_bcl = safe_import("LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr")
+ibnr_cc = safe_import("LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr")
+ibnr_bf = safe_import("LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr")
 
-# RA (Risk Adjustment)
-from LIC_Calculators.RA_Calculators.mack_ra import calculate_mack_chain_ladder
-from LIC_Calculators.RA_Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
+ulae_engine = safe_import("LIC Calculators.FCF Calculators.ULAE Calculators.ulae_engine")
+npr_engine = safe_import("LIC Calculators.FCF Calculators.NPR Calculators.npr_engine")
 
-# SHARED HELPERS
-from utils.actuarial_helpers import (
-    build_triangles, volume_weighted_factors, simple_average_factors,
-    geometric_average_factors, medial_average_factors, linear_regression_factors,
-    weighted_last_n_factors, stability_diagnostics, recommend_factors,
-    compute_cdfs, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle,
-    period_index, period_label, periods_per_year
-)
+ra_mack = safe_import("LIC Calculators.RA Calculators.mack_ra")
+ra_boot = safe_import("LIC Calculators.RA Calculators.bootstrap_ra")
 
-# FULL IFRS 17 LRC ENGINE (SEPARATE FILE)
-from Full_Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
+# --- SHARED HELPERS ---
+act_helpers = safe_import("utils.actuarial_helpers")
+
+# --- FULL VALUATION ---
+full_engine = safe_import("Full Valuation.full_LRC_IFRS17")
 
 
 # =============================================================================
@@ -234,25 +238,25 @@ def render_triangle_calculator(title, client_name_key, engine_callback):
         # ---- Step 6: Run Calculation ----
         if st.button("Run Calculation", key=f"{client_name_key}_run", use_container_width=True):
             # Build triangle
-            inc, cum, obs_mask = build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
+            inc, cum, obs_mask = act_helpers.build_triangles(df, loss_col, report_col, amt_col, from_dt, g_code, n_periods)
             
             # Inflation
             if use_inflation and cum_inflation is not None:
-                _, real_cum = deflate_triangle_to_real(inc, cum_inflation, n_periods)
+                _, real_cum = act_helpers.deflate_triangle_to_real(inc, cum_inflation, n_periods)
                 working_cum = real_cum
             else: working_cum = cum
 
             # Calculate all LDFs
-            vw = volume_weighted_factors(working_cum)
-            sa = simple_average_factors(working_cum)
-            geo = geometric_average_factors(working_cum)
-            med = medial_average_factors(working_cum)
-            lr_tuple = linear_regression_factors(working_cum)
+            vw = act_helpers.volume_weighted_factors(working_cum)
+            sa = act_helpers.simple_average_factors(working_cum)
+            geo = act_helpers.geometric_average_factors(working_cum)
+            med = act_helpers.medial_average_factors(working_cum)
+            lr_tuple = act_helpers.linear_regression_factors(working_cum)
             lr, slope, intercept, r2 = lr_tuple
-            wln = weighted_last_n_factors(working_cum, n=3)
+            wln = act_helpers.weighted_last_n_factors(working_cum, n=3)
 
-            cvs = stability_diagnostics(working_cum)
-            recs, mean_cv = recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
+            cvs = act_helpers.stability_diagnostics(working_cum)
+            recs, mean_cv = act_helpers.recommend_factors(vw, sa, geo, med, lr_tuple, cvs)
 
             # Display LDF Selection
             st.subheader("LDF Selection")
@@ -331,7 +335,7 @@ def render_ocr_calculator():
         if not amount_cols: return
 
         if st.button("Calculate OCR", key="ocr_run", use_container_width=True):
-            results, report, grand_total = calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
+            results, report, grand_total = ocr_engine.calculate_ocr(df, grouping_cols, amount_cols, clean_data=True)
             st.subheader("OCR Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total OCR: {grand_total:,.2f}")
@@ -381,7 +385,7 @@ def render_percentage_calculator():
 
         if st.button("Calculate", key="pct_run", use_container_width=True):
             df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
-            results, total = calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
+            results, total = ibnr_pct.calculate_percentage_ibnr(df, date_col, lob_col, amount_cols, pd.to_datetime(from_date), pd.to_datetime(to_date), ibnr_pct)
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
             st.success(f"Grand Total IBNR: {total:,.2f}")
@@ -402,8 +406,7 @@ def render_percentage_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bcl_calculator():
-    from LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr import calculate_bcl_ibnr
-    render_triangle_calculator("BCL Chain-Ladder", "bcl", calculate_bcl_ibnr)
+    render_triangle_calculator("BCL Chain-Ladder", "bcl", ibnr_bcl.calculate_bcl_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -411,8 +414,7 @@ def render_bcl_calculator():
 # -----------------------------------------------------------------------------
 
 def render_capecod_calculator():
-    from LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
-    render_triangle_calculator("Cape Cod IBNR", "cc", calculate_cape_cod_ibnr)
+    render_triangle_calculator("Cape Cod IBNR", "cc", ibnr_cc.calculate_cape_cod_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -420,8 +422,7 @@ def render_capecod_calculator():
 # -----------------------------------------------------------------------------
 
 def render_bf_calculator():
-    from LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr import calculate_bf_ibnr
-    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", calculate_bf_ibnr)
+    render_triangle_calculator("Bornhuetter-Ferguson IBNR", "bf", ibnr_bf.calculate_bf_ibnr)
 
 
 # -----------------------------------------------------------------------------
@@ -484,14 +485,14 @@ def render_ulae_calculator():
                 app_df = pd.read_csv(app_file) if app_file.name.endswith('.csv') else pd.read_excel(app_file)
                 app_col = st.selectbox("Apportionment Amount Column", app_df.columns, key="ulae_app_amt")
                 app_df = app_df.rename(columns={app_col: "Amount"})
-                apportionment_df = calculate_apportionment_percentages(app_df)
+                apportionment_df = ulae_engine.calculate_apportionment_percentages(app_df)
 
         if st.button("Calculate ULAE", key="ulae_run", use_container_width=True):
             if basis == "Per Portfolio":
-                results = calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
+                results = ulae_engine.calculate_ulae_per_portfolio(df, ulae_ratios, is_detailed)
             else:
                 overall_ratio = list(ulae_ratios.values())[0]
-                results, total_base = calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
+                results, total_base = ulae_engine.calculate_ulae_aggregated(df, overall_ratio, apportionment_df, is_detailed)
             
             st.subheader("Results")
             st.dataframe(results, use_container_width=True)
@@ -756,7 +757,7 @@ def render_full_valuation():
                 }
 
                 # CALL THE PURE ENGINE FROM THE SEPARATE FILE
-                results = calculate_full_ifrs17_lrc(
+                results = full_engine.calculate_full_ifrs17_lrc(
                     opening_balances, cashflows, policy, loss_component,
                     yield_curve, claims_curve, config, report_date
                 )
