@@ -17,27 +17,27 @@ from scipy import interpolate  # <-- Added for Inflation/Discounting interpolati
 # =============================================================================
 
 # UPR
-from LRC Calculators.upr_engine import calculate_upr
+from LRC_Calculators.upr_engine import calculate_upr
 
 # Loss Component
-from LRC Calculators.loss_component_engine import calculate_loss_component
+from LRC_Calculators.loss_component_engine import calculate_loss_component
 
 # OCR
-from LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine import calculate_ocr
+from LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine import calculate_ocr
 
 # IBNR
-from LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr import calculate_percentage_ibnr
-from LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr import calculate_bcl_ibnr
-from LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
-from LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr import calculate_bf_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr import calculate_percentage_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr import calculate_bcl_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr import calculate_bf_ibnr
 
 # ULAE & NPR
-from LIC Calculators.FCF Calculators.ULAE Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
-from LIC Calculators.FCF Calculators.NPR Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
+from LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
+from LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
 
 # RA (Risk Adjustment)
-from LIC Calculators.RA Calculators.mack_ra import calculate_mack_chain_ladder
-from LIC Calculators.RA Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
+from LIC_Calculators.RA_Calculators.mack_ra import calculate_mack_chain_ladder
+from LIC_Calculators.RA_Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
 
 # SHARED HELPERS
 from utils.actuarial_helpers import (
@@ -50,7 +50,7 @@ from utils.actuarial_helpers import (
 )
 
 # FULL IFRS 17 LRC ENGINE (SEPARATE FILE)
-from Full Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
+from Full_Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
 
 
 # =============================================================================
