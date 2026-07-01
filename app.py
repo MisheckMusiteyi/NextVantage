@@ -211,7 +211,7 @@ def render_upr_calculator():
     with col2: client_name = st.text_input("Client", value="Client", key="upr_cn").strip()
     with col3: method = st.selectbox("Method", ["365th","24th","8th"], key="upr_mt")
     with col4: pass
-    valuation_date = pd.Timestamp(valuation_date)
+    valuation_date = pd.Timestamp(str(valuation_date))
     uploaded_file = st.file_uploader("Upload premium register (CSV or Excel)", type=["csv","xlsx","xls"], key="upr_f")
     if uploaded_file is not None:
         try:
@@ -232,8 +232,8 @@ def render_upr_calculator():
             selected_value_cols = st.multiselect("Numeric columns:", options=numeric_columns, default=numeric_columns[:min(4,len(numeric_columns))], key="upr_vc")
             if not selected_value_cols: st.info("Please select at least one Numeric column."); return
             df_check = df.rename(columns={start_date_col:'Start_Date', end_date_col:'End_Date'})
-            df_check['Start_Date'] = pd.to_datetime(df_check['Start_Date'], errors='coerce')
-            df_check['End_Date'] = pd.to_datetime(df_check['End_Date'], errors='coerce')
+            df_check['Start_Date'] = pd.to_datetime(df_check['Start_Date'], errors='coerce').astype('datetime64[ns]')
+            df_check['End_Date'] = pd.to_datetime(df_check['End_Date'], errors='coerce').astype('datetime64[ns]')
             bad = df_check.dropna(subset=['Start_Date','End_Date']); bad = bad[bad['End_Date'] <= bad['Start_Date']]
             if len(bad) > 0: st.error(f"{len(bad)} rows have End_Date ≤ Start_Date."); return
             df_processed = df_check.dropna(subset=['Start_Date','End_Date']); df_processed = df_processed[df_processed['End_Date'] > df_processed['Start_Date']]
@@ -329,11 +329,11 @@ def render_bcl_calculator():
         with c3: lob_col = st.selectbox("Line of Business", cols, key="bcl_lob")
         with c4: amt_col = st.selectbox("Claim Amount", cols, key="bcl_amt")
 
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
-        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce')
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce').astype('datetime64[ns]')
+        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce').astype('datetime64[ns]')
         df[amt_col]  = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
-        from_dt = pd.Timestamp(from_date); to_dt = pd.Timestamp(to_date)
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
 
         def ap(d):
@@ -458,11 +458,11 @@ def render_capecod_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="cc_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="cc_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="cc_amt")
-        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce')
-        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
-        from_dt=pd.Timestamp(from_date); to_dt=pd.Timestamp(to_date)
+        from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
         if st.button("Calculate Cape Cod IBNR",key="cc_run",width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique()); rows=[]
@@ -558,11 +558,11 @@ def render_bf_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="bf_amt")
-        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce')
-        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce')
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
-        from_dt=pd.Timestamp(from_date); to_dt=pd.Timestamp(to_date)
+        from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=df[(df[loss_col]>=from_dt)&(df[loss_col]<=to_dt)]
         lobs=sorted(df[lob_col].dropna().unique())
         st.markdown("**ELR per Portfolio (%):**")
@@ -1082,7 +1082,7 @@ def _render_simplified_upr_branch(report_date, report_client):
     Includes UPR, OCR, IBNR (BCL), ULAE, RA (Bootstrap @90%), and the
     Income Statement.
     """
-    val_date = pd.Timestamp(report_date)
+    val_date = pd.Timestamp(str(report_date))
     from_dt = pd.Timestamp('2020-01-01')
     to_dt = pd.Timestamp('2025-12-31')
     n_periods_bcl = to_dt.year - from_dt.year + 1
@@ -1254,7 +1254,7 @@ def _render_simplified_upr_branch(report_date, report_client):
         else:
             with st.spinner("Running full IFRS 17 valuation..."):
                 results = {}
-                val_date = pd.Timestamp(report_date)
+                val_date = pd.Timestamp(str(report_date))
                 from_dt = pd.Timestamp('2020-01-01')
                 to_dt = pd.Timestamp('2025-12-31')
                 n_periods_bcl = to_dt.year - from_dt.year + 1
@@ -1274,8 +1274,8 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- UPR ----
                 if calc_upr and upr_data is not None:
                     df_upr = upr_data.copy()
-                    df_upr['Start_Date'] = pd.to_datetime(df_upr['Start_Date'], errors='coerce')
-                    df_upr['End_Date'] = pd.to_datetime(df_upr['End_Date'], errors='coerce')
+                    df_upr['Start_Date'] = pd.to_datetime(df_upr['Start_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_upr['End_Date'] = pd.to_datetime(df_upr['End_Date'], errors='coerce').astype('datetime64[ns]')
                     df_upr['Premium'] = pd.to_numeric(df_upr['Gross_Written_Premium'], errors='coerce')
                     df_upr = df_upr.dropna(subset=['Start_Date','End_Date'])
                     df_upr = df_upr[df_upr['End_Date'] > df_upr['Start_Date']]
@@ -1313,8 +1313,8 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- IBNR ----
                 if calc_ibnr and claims_data is not None:
                     df_cl = claims_data.copy()
-                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce')
-                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce')
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
                     df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
                     df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
                     df_cl = df_cl[(df_cl['Loss_Date']>=from_dt)&(df_cl['Loss_Date']<=to_dt)]
@@ -1429,8 +1429,8 @@ def _render_simplified_upr_branch(report_date, report_client):
                 # ---- RA (Bootstrap) ----
                 if calc_ra and ra_method == "Bootstrap" and claims_data is not None:
                     df_cl = claims_data.copy()
-                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce')
-                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce')
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
                     df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
                     df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
                     df_cl = df_cl[(df_cl['Loss_Date']>=from_dt)&(df_cl['Loss_Date']<=to_dt)]
@@ -1733,7 +1733,7 @@ def _render_full_ifrs17_lrc_branch(report_date, report_client):
     Full IFRS 17 LRC (PAA) Mode.
     Independent of the Simplified UPR branch.
     """
-    val_date = pd.Timestamp(report_date)
+    val_date = pd.Timestamp(str(report_date))
     ifrs17_data = {}
 
     # ---- CONFIGURATION TOGGLES ----
