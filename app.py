@@ -276,6 +276,38 @@ def map_columns(df, required_fields, file_label):
     return mapped
 
 # =============================================================================
+#  IMPORT ENGINES
+# =============================================================================
+# Note: Path fixing is done at the top using sys.path, so these imports should now work.
+from LRC_Calculators.upr_engine import calculate_upr
+from LRC_Calculators.loss_component_engine import calculate_loss_component
+
+from LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine import calculate_ocr
+
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr import calculate_percentage_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr import calculate_bcl_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
+from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr import calculate_bf_ibnr
+
+from LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
+from LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
+
+from LIC_Calculators.RA_Calculators.mack_ra import calculate_mack_chain_ladder
+from LIC_Calculators.RA_Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
+
+from utils.actuarial_helpers import (
+    build_triangles, volume_weighted_factors, simple_average_factors,
+    geometric_average_factors, medial_average_factors, linear_regression_factors,
+    weighted_last_n_factors, stability_diagnostics, recommend_factors,
+    compute_cdfs, project_ultimate, deflate_triangle_to_real,
+    reinflate_ibnr_per_ap, discount_completed_triangle,
+    period_index, period_label, periods_per_year
+)
+
+from Full_Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
+
+
+# =============================================================================
 #  NAVIGATION MENUS
 # =============================================================================
 
@@ -292,10 +324,6 @@ def render_home():
     with col3:
         st.markdown('<div class="card"><h3>LIC</h3><p>Fulfilment Cashflows | Risk Adjustment</p></div>', unsafe_allow_html=True)
         if st.button("Go to LIC", key="nav_home_lic"): navigate_to('lic', ['Home','LIC']); st.rerun()
-
-# =============================================================================
-#  INDIVIDUAL LRC CALCULATORS
-# =============================================================================
 
 def render_lrc():
     show_breadcrumb()
@@ -469,10 +497,6 @@ def render_ocr_calculator():
         except Exception as e: st.error(f"Error: {e}")
     back_button('fulfilment_cashflows', ['Home','LIC','Fulfilment Cashflows'])
 
-# =============================================================================
-#  BCL CALCULATOR WITH INFLATION & DISCOUNTING (From your reference script)
-# =============================================================================
-
 def render_bcl_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) — IBNR Calculator</h1><p>Volume-weighted development factors with configurable grain and grouping</p></div>', unsafe_allow_html=True)
@@ -640,6 +664,7 @@ def render_bcl_calculator():
 
     back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
+
 def render_capecod_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>Uses earned premiums to derive an implied ELR; more responsive than fixed-ELR BF</p></div>', unsafe_allow_html=True)
@@ -670,6 +695,20 @@ def render_capecod_calculator():
         df=df.dropna(subset=[loss_col,rep_col])
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=_date_filter(df, loss_col, from_date, to_date)
+
+        # ===== INFLATION & DISCOUNTING INPUTS =====
+        st.markdown("#### Inflation & Discounting Adjustments")
+        c1, c2 = st.columns(2)
+        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
+        with c2: use_discounting = st.checkbox("Apply Discounting", key="cc_disc")
+
+        grain = "Y"; ppy = 1
+        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        if use_inflation:
+            cum_inflation, per_period_rates = load_inflation_data_interactive(grain, ppy)
+        if use_discounting:
+            spot_rates, flat_rate = load_discounting_data_interactive(grain, ppy)
+
         if st.button("Calculate Cape Cod IBNR",key="cc_run",width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique()); rows=[]
             for lob in lobs:
@@ -703,7 +742,6 @@ def render_capecod_calculator():
                 if lob in prem_df.columns:
                     vals=pd.to_numeric(prem_df[lob],errors='coerce').fillna(0).tolist()
                     for i,v in enumerate(vals): prems[i]=v
-                # Cape Cod: ELR = sum(actual claims) / sum(expected_premium * pct_developed)
                 num_elr=den_elr=0.0
                 for i in range(n_ay):
                     lo=-1
@@ -742,6 +780,7 @@ def render_capecod_calculator():
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
+
 def render_bf_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) IBNR</h1><p>Expected + Actual blend using user-supplied ELR per portfolio</p></div>', unsafe_allow_html=True)
@@ -764,6 +803,7 @@ def render_bf_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="bf_amt")
+        
         df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
         df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
@@ -780,6 +820,20 @@ def render_bf_calculator():
         if prem_file is not None:
             prem_data=pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
             prem_data.columns=prem_data.columns.astype(str).str.strip()
+
+        # ===== INFLATION & DISCOUNTING INPUTS =====
+        st.markdown("#### Inflation & Discounting Adjustments")
+        c1, c2 = st.columns(2)
+        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
+        with c2: use_discounting = st.checkbox("Apply Discounting", key="bf_disc")
+
+        grain = "Y"; ppy = 1
+        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        if use_inflation:
+            cum_inflation, per_period_rates = load_inflation_data_interactive(grain, ppy)
+        if use_discounting:
+            spot_rates, flat_rate = load_discounting_data_interactive(grain, ppy)
+
         if st.button("Calculate BF IBNR",key="bf_run",width='stretch'):
             all_rows=[]; summ_rows=[]
             for lob in lobs:
@@ -845,6 +899,7 @@ def render_bf_calculator():
         st.error(f"Error: {e}")
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+
 
 def render_ulae_calculator():
     show_breadcrumb()
@@ -966,7 +1021,6 @@ def render_mack_calculator():
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="mck_cn").strip()
     with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.9,75.0,1.0,key="mck_cl")/100
-    from scipy.stats import norm
     z=norm.ppf(confidence)
     with c3: st.info(f"z-score: {z:.3f}")
     uploaded=st.file_uploader("Upload claims triangle (cumulative, CSV/Excel — rows=AY, cols=Dev)",type=["csv","xlsx","xls"],key="mck_f")
