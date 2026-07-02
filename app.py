@@ -729,6 +729,20 @@ def render_capecod_calculator():
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=_date_filter(df, loss_col, from_date, to_date)
 
+        # ===== PREMIUM DATA COLUMN MAPPING =====
+        st.markdown("#### Premium Data Column Mapping")
+        cols = prem_df.columns.tolist()
+        c1, c2, c3 = st.columns(3)
+        with c1: prem_lob_col = st.selectbox("LOB / Portfolio Column", cols, key="cc_prem_lob")
+        with c2: prem_amt_col = st.selectbox("Premium Amount Column", cols, key="cc_prem_amt")
+        with c3: prem_date_col = st.selectbox("Premium Date Column (Optional)", ["None"] + cols, key="cc_prem_date")
+        
+        use_prem_date = prem_date_col != "None"
+        prem_df[prem_lob_col] = prem_df[prem_lob_col].astype(str)
+        prem_df[prem_amt_col] = pd.to_numeric(prem_df[prem_amt_col], errors='coerce').fillna(0)
+        if use_prem_date:
+            prem_df[prem_date_col] = pd.to_datetime(prem_df[prem_date_col], errors='coerce')
+
         # ===== INFLATION & DISCOUNTING INPUTS =====
         st.markdown("#### Inflation & Discounting Adjustments")
         c1, c2 = st.columns(2)
@@ -771,17 +785,25 @@ def render_capecod_calculator():
                 cdfs=[]; run=1.0
                 for f in reversed(facs): run*=f; cdfs.insert(0,run)
                 pct_unpaid=[1-(1/c) if c>0 else 0 for c in cdfs]
-                prems={}
-                if lob in prem_df.columns:
-                    vals=pd.to_numeric(prem_df[lob],errors='coerce').fillna(0).tolist()
-                    for i,v in enumerate(vals): prems[i]=v
+                
+                # Gather premiums by mapped columns
+                prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
+                if use_prem_date:
+                    prem_sub['Year'] = prem_sub[prem_date_col].dt.year
+                    prems = prem_sub.groupby('Year')[prem_amt_col].sum().reindex(range(from_dt.year, from_dt.year + n), fill_value=0).tolist()
+                else:
+                    prems = prem_sub[prem_amt_col].tolist()
+                    if len(prems) < n: prems.extend([0] * (n - len(prems)))
+                    elif len(prems) > n: prems = prems[:n]
+
                 num_elr=den_elr=0.0
                 for i in range(n_ay):
                     lo=-1
                     for j in range(n_d-1,-1,-1):
                         if i+j<n_ay: lo=j; break
                     if lo<0: continue
-                    prem_i=prems.get(i,0); pct_dev=1-pct_unpaid[lo] if lo<len(pct_unpaid) else 1
+                    prem_i=prems[i] if i < len(prems) else 0
+                    pct_dev=1-pct_unpaid[lo] if lo<len(pct_unpaid) else 1
                     num_elr+=wc.iloc[i,lo]; den_elr+=prem_i*pct_dev
                 cc_elr=num_elr/den_elr if den_elr>0 else 0.7
                 total_ibnr=0.0
@@ -790,7 +812,8 @@ def render_capecod_calculator():
                     for j in range(n_d-1,-1,-1):
                         if i+j<n_ay: lo=j; break
                     if lo<0: continue
-                    prem_i=prems.get(i,0); pct_u=pct_unpaid[lo] if lo<len(pct_unpaid) else 0
+                    prem_i=prems[i] if i < len(prems) else 0
+                    pct_u=pct_unpaid[lo] if lo<len(pct_unpaid) else 0
                     ibnr=prem_i*cc_elr*pct_u; total_ibnr+=ibnr
                     rows.append({'LOB':lob,'Year':from_dt.year+i,'Premium':prem_i,'CC_ELR':cc_elr,'Pct_Unpaid':pct_u,'IBNR':ibnr})
             res=pd.DataFrame(rows)
@@ -844,15 +867,32 @@ def render_bf_calculator():
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=_date_filter(df, loss_col, from_date, to_date)
         lobs=sorted(df[lob_col].dropna().unique())
+
+        # ===== PREMIUM DATA COLUMN MAPPING =====
+        st.markdown("#### Premium Data Column Mapping")
+        if prem_file is not None:
+            prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+            prem_df.columns = prem_df.columns.astype(str).str.strip()
+            prem_cols = prem_df.columns.tolist()
+            c1, c2, c3 = st.columns(3)
+            with c1: prem_lob_col = st.selectbox("LOB / Portfolio Column", prem_cols, key="bf_prem_lob")
+            with c2: prem_amt_col = st.selectbox("Premium Amount Column", prem_cols, key="bf_prem_amt")
+            with c3: prem_date_col = st.selectbox("Premium Date Column (Optional)", ["None"] + prem_cols, key="bf_prem_date")
+            
+            use_prem_date = prem_date_col != "None"
+            prem_df[prem_lob_col] = prem_df[prem_lob_col].astype(str)
+            prem_df[prem_amt_col] = pd.to_numeric(prem_df[prem_amt_col], errors='coerce').fillna(0)
+            if use_prem_date:
+                prem_df[prem_date_col] = pd.to_datetime(prem_df[prem_date_col], errors='coerce')
+        else:
+            prem_df = None
+            use_prem_date = False
+
         st.markdown("**ELR per Portfolio (%):**")
         elr_cols=st.columns(min(len(lobs),4))
         elr_dict={}
         for i,lob in enumerate(lobs):
             with elr_cols[i%4]: elr_dict[lob]=st.number_input(f"ELR {lob}",0.0,200.0,70.0,1.0,key=f"bf_elr_{lob}")/100
-        prem_data=None
-        if prem_file is not None:
-            prem_data=pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
-            prem_data.columns=prem_data.columns.astype(str).str.strip()
 
         # ===== INFLATION & DISCOUNTING INPUTS =====
         st.markdown("#### Inflation & Discounting Adjustments")
@@ -896,17 +936,27 @@ def render_bf_calculator():
                 cdfs=[]; run=1.0
                 for f in reversed(facs): run*=f; cdfs.insert(0,run)
                 pct_unpaid=[1-(1/c) if c>0 else 0 for c in cdfs]
-                prems={}
-                if prem_data is not None and lob in prem_data.columns:
-                    vals=pd.to_numeric(prem_data[lob],errors='coerce').fillna(0).tolist()
-                    for i,v in enumerate(vals): prems[i]=v
+                
+                # Gather premiums by mapped columns
+                if prem_df is not None:
+                    prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
+                    if use_prem_date:
+                        prem_sub['Year'] = prem_sub[prem_date_col].dt.year
+                        prems = prem_sub.groupby('Year')[prem_amt_col].sum().reindex(range(from_dt.year, from_dt.year + n), fill_value=0).tolist()
+                    else:
+                        prems = prem_sub[prem_amt_col].tolist()
+                        if len(prems) < n: prems.extend([0] * (n - len(prems)))
+                        elif len(prems) > n: prems = prems[:n]
+                else:
+                    prems = [wc.iloc[i,0]*1.5 if wc.iloc[i,0]>0 else 1000 for i in range(n_ay)]
+
                 elr=elr_dict.get(lob,0.7); total_bf=0.0
                 for i in range(n_ay):
                     lo=-1
                     for j in range(n_d-1,-1,-1):
                         if i+j<n_ay: lo=j; break
                     if lo<0: continue
-                    prem_i=prems.get(i,wc.iloc[i,lo]*1.5 if wc.iloc[i,lo]>0 else 1000)
+                    prem_i=prems[i] if i < len(prems) else 0
                     pct_u=pct_unpaid[lo] if lo<len(pct_unpaid) else 0
                     bf_ibnr=prem_i*elr*pct_u; total_bf+=bf_ibnr
                     all_rows.append({'LOB':lob,'Year':from_dt.year+i,'Premium':prem_i,'ELR':elr,'Pct_Unpaid':pct_u,'Current':wc.iloc[i,lo],'BF_IBNR':bf_ibnr})
