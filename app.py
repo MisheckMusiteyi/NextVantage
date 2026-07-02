@@ -13,6 +13,35 @@ from io import BytesIO
 from datetime import date, datetime
 import re
 from scipy import interpolate
+import sys
+import os
+
+# =============================================================================
+#  PATH FIXER (Match your exact GitHub folder names)
+# =============================================================================
+
+# Get the absolute path where app.py is running
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Add all your crucial folders to Python's search path
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+# Add the specific folder that is causing the ModuleNotFoundError
+full_valuation_path = os.path.join(BASE_DIR, "Full_Valuation")
+if full_valuation_path not in sys.path:
+    sys.path.insert(0, full_valuation_path)
+
+# Also ensure your shared utils and LRC/LIC folders are available
+sys.path.insert(0, os.path.join(BASE_DIR, "LRC_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "OCR_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "IBNR_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "ULAE_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "NPR_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "RA_Calculators"))
+sys.path.insert(0, os.path.join(BASE_DIR, "utils"))
 
 def _parse_dates(series):
     """Safely parse any column to datetime regardless of source dtype."""
