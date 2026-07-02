@@ -31,7 +31,6 @@ from io import BytesIO
 from datetime import date, datetime
 import re
 from scipy import interpolate
-from scipy.stats import norm
 
 def _parse_dates(series):
     """Safely parse any column to datetime regardless of source dtype."""
@@ -42,7 +41,7 @@ def _parse_dates(series):
 
 def _date_filter(df, col, from_date, to_date):
     """Filter dataframe by date column between from_date and to_date."""
-    # Ensure the column is parsed into datetime BEFORE using .dt
+    # FIX: Ensure the column is parsed into datetime BEFORE using .dt
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
         df[col] = pd.to_datetime(df[col], errors='coerce')
     
@@ -54,7 +53,7 @@ def _date_filter(df, col, from_date, to_date):
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="expanded")
 
 # =============================================================================
-#  CUSTOM CSS
+#  CUSTOM CSS (From your first iteration)
 # =============================================================================
 
 st.markdown("""
@@ -200,7 +199,7 @@ def render_ibnr_menu():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>IBNR Methods</h1></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator")]
+    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator"), ("Percentage", "percentage_calculator")]
     for i in range(0, len(methods), 3):
         cols = st.columns(3)
         for j in range(3):
@@ -329,7 +328,7 @@ def render_ocr_calculator():
 
 def render_bcl_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) — IBNR Calculator</h1><p>Full LDF selection, Inflation, Discounting, and Stability Diagnostics</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) — IBNR Calculator</h1><p>Volume-weighted development factors with configurable grain and grouping</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
     c1,c2,c3,c4 = st.columns(4)
@@ -340,9 +339,7 @@ def render_bcl_calculator():
 
     grain_map = {"Yearly":"Y","Quarterly":"Q","Monthly":"M"}
     grain_code = grain_map[grain]
-    ppy = {"Y":1, "Q":4, "M":12}[grain_code]
 
-    # ---- Step 1: Load Claims Data ----
     uploaded = st.file_uploader("Upload claims file (CSV/Excel)", type=["csv","xlsx","xls"], key="bcl_f")
     if uploaded is None:
         st.info("Upload a claims file with Loss Date, Report Date, Line of Business, and Claim Amount columns.")
@@ -353,272 +350,104 @@ def render_bcl_calculator():
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(3), width='stretch')
         cols = df.columns.tolist()
-        
         c1,c2,c3,c4 = st.columns(4)
         with c1: loss_col = st.selectbox("Loss Date", cols, key="bcl_ld")
         with c2: rep_col = st.selectbox("Report Date", cols, key="bcl_rd")
         with c3: lob_col = st.selectbox("Line of Business", cols, key="bcl_lob")
         with c4: amt_col = st.selectbox("Claim Amount", cols, key="bcl_amt")
 
-        # ---- Step 2: Data Validation & Preparation ----
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
-        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce')
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce').astype('datetime64[ns]')
+        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce').astype('datetime64[ns]')
         df[amt_col]  = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
 
-        # ---- Step 3: Inflation & Discounting ----
-        st.markdown("#### Step 3: Inflation & Discounting Adjustments")
-        c1, c2 = st.columns(2)
-        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bcl_inf")
-        with c2: use_discounting = st.checkbox("Apply Discounting", key="bcl_disc")
+        def ap(d):
+            if grain_code=="Y": return d.year - from_dt.year
+            elif grain_code=="Q": return (d.year-from_dt.year)*4+(d.month-1)//3-((from_dt.month-1)//3)
+            else: return (d.year-from_dt.year)*12+(d.month-from_dt.month)
 
-        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        def dp(ld,rd):
+            if grain_code=="Y": return rd.year-ld.year
+            elif grain_code=="Q": return ((rd.year-ld.year)*4+(rd.month-1)//3)-((ld.year-ld.year)*4+(ld.month-1)//3)
+            else: return (rd.year-ld.year)*12+(rd.month-ld.month)
 
-        if use_inflation:
-            st.markdown("**Upload Inflation Data**")
-            inf_file = st.file_uploader("Upload Inflation Curve (Period, Rate)", type=["csv","xlsx","xls"], key="bcl_inf_f")
-            if inf_file:
-                inf_df = pd.read_csv(inf_file) if inf_file.name.endswith('.csv') else pd.read_excel(inf_file)
-                p_col = st.selectbox("Period column", inf_df.columns, key="bcl_inf_p")
-                r_col = st.selectbox("Rate column", inf_df.columns, key="bcl_inf_r")
-                inf_df = inf_df[[p_col, r_col]].dropna()
-                inf_df[r_col] = pd.to_numeric(inf_df[r_col], errors='coerce') / 100.0
-                rates_inf = inf_df[r_col].values
-                ratio = ppy / {"Y":1, "Q":4, "M":12}[grain_code]
-                x_inf = np.arange(len(rates_inf)) * ratio
-                x_tgt = np.arange(int(x_inf[-1]) + 1)
-                if len(x_inf) >= 4:
-                    f_interp = interpolate.CubicSpline(x_inf, rates_inf, extrapolate=True)
-                else:
-                    f_interp = interpolate.interp1d(x_inf, rates_inf, kind='linear', fill_value='extrapolate')
-                annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
-                per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
-                cum_inflation = np.cumprod(1 + per_period_rates)
-                st.success(f"Inflation interpolated to {grain}.")
-
-        if use_discounting:
-            st.markdown("**Upload Yield Curve**")
-            disc_method = st.radio("Discounting Method", ["Yield Curve", "Single Flat Rate"], key="bcl_disc_method")
-            if disc_method == "Yield Curve":
-                yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate)", type=["csv","xlsx","xls"], key="bcl_yc")
-                if yc_file:
-                    yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
-                    m_col = st.selectbox("Maturity column", yc_df.columns, key="bcl_yc_m")
-                    r_col = st.selectbox("Rate column", yc_df.columns, key="bcl_yc_r")
-                    yc_df = yc_df[[m_col, r_col]].dropna()
-                    yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
-                    yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
-                    maturities = yc_df[m_col].values; rates = yc_df[r_col].values
-                    if len(maturities) >= 4:
-                        f_interp = interpolate.CubicSpline(maturities, rates, extrapolate=True)
-                    else:
-                        f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
-                    period_maturities = np.arange(1, 61) / ppy
-                    spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
-                    st.success(f"Yield Curve interpolated to {grain}.")
+        def ap_label(i):
+            if grain_code=="Y": return str(from_dt.year+i)
+            elif grain_code=="Q":
+                bq=from_dt.year*4+(from_dt.month-1)//3+i; return f"{bq//4}-Q{bq%4+1}"
             else:
-                flat_rate = st.number_input("Annual Discount Rate (%)", 0.0, 50.0, 5.0, 0.5, key="bcl_flat") / 100.0
+                tm=from_dt.year*12+from_dt.month-1+i; return f"{tm//12}-{tm%12+1:02d}"
 
-        # ---- Step 4: Run Calculation ----
-        if st.button("Run Calculation", key="bcl_run", use_container_width=True):
+        if st.button("Calculate BCL IBNR", key="bcl_run", width='stretch'):
             lobs = sorted(df[lob_col].dropna().unique())
-            n_periods = (to_date.year - from_date.year) * ppy + 1
-            from_dt = pd.Timestamp(str(from_date))
-
             all_rows = []
             for lob in lobs:
                 sub = df[df[lob_col]==lob].copy()
-                sub['AP'] = sub[loss_col].apply(lambda d: (d.year - from_dt.year) * ppy + (d.month - from_dt.month)// (12//ppy))
-                sub['DP'] = sub.apply(lambda r: max(0, (r[rep_col].year - r[loss_col].year) * ppy + (r[rep_col].month - r[loss_col].month)// (12//ppy)), axis=1)
-                
-                n_ap = sub['AP'].max()+1 if not sub.empty else n_periods
+                sub['AP'] = sub[loss_col].apply(ap)
+                sub['DP'] = sub.apply(lambda r: max(0,dp(r[loss_col],r[rep_col])), axis=1)
+                n_ap = sub['AP'].max()+1 if not sub.empty else 1
                 n_dp = n_ap
                 sub = sub[(sub['AP']>=0)&(sub['AP']<n_ap)]
                 sub['DP'] = sub['DP'].clip(0, n_dp-1)
-                
-                pivot = sub.pivot_table(index='AP', columns='DP', values=amt_col, aggfunc='sum')
-                for i in range(n_periods):
-                    if i not in pivot.index: pivot.loc[i] = np.nan
-                for j in range(n_periods):
-                    if j not in pivot.columns: pivot[j] = np.nan
+                pivot = sub.pivot_table(index='AP',columns='DP',values=amt_col,aggfunc='sum')
+                for i in range(n_ap):
+                    if i not in pivot.index: pivot.loc[i]=np.nan
+                for j in range(n_dp):
+                    if j not in pivot.columns: pivot[j]=np.nan
                 inc = pivot.sort_index()[sorted(pivot.columns)].astype(float)
                 for i in inc.index:
                     for j in inc.columns:
-                        if i+j>=n_periods: inc.loc[i,j] = np.nan
+                        if i+j>=n_ap: inc.loc[i,j]=np.nan
                 cum = inc.copy()
                 for i in inc.index:
                     r=0.0
                     for j in sorted(inc.columns):
-                        if i+j<n_periods:
+                        if i+j<n_ap:
                             v=inc.loc[i,j]; r+=v if pd.notna(v) else 0.0; cum.loc[i,j]=r
                         else: cum.loc[i,j]=np.nan
-
-                # Inflation Adjustment
-                working_cum = cum.copy()
-                if use_inflation and cum_inflation is not None:
-                    defl_factor = cum_inflation[:n_periods]
-                    for i in range(n_periods):
-                        for j in range(n_periods):
-                            if i+j < n_periods and pd.notna(cum.iloc[i,j]):
-                                working_cum.iloc[i,j] = cum.iloc[i,j] / (defl_factor[i+j] if i+j < len(defl_factor) else 1.0)
-
-                wc = working_cum.fillna(0)
-                n_ay, n_d = wc.shape
-                
-                # LDF Calculations
-                vw = []
-                sa = []
-                geo = []
-                med = []
-                lr_tuple = []
-                wln = []
-                
+                wc=cum.fillna(0); n_ay,n_d=wc.shape
+                factors=[]
                 for j in range(n_d-1):
-                    # Volume-Weighted
-                    num, den = 0.0, 0.0
-                    values = []
+                    num,den=0.0,0.0
                     for i in range(n_ay):
-                        if i+j+1 < n_ay:
-                            c = wc.iloc[i,j]
-                            nxt = wc.iloc[i,j+1]
-                            if c > 0:
-                                num += nxt
-                                den += c
-                                values.append(nxt/c)
-                    vw.append(num/den if den>0 else 1.0)
-                    sa.append(np.mean(values) if values else 1.0)
-                    geo.append(np.exp(np.mean(np.log(values))) if values and all(v>0 for v in values) else 1.0)
-                    med.append(np.median(values) if values else 1.0)
-                    
-                    # Linear Regression
-                    if len(values) >= 2:
-                        y = np.array(values)
-                        x = np.arange(len(y))
-                        slope, intercept = np.polyfit(x, y, 1)
-                        r2 = 1 - np.sum((y - (slope*x+intercept))**2) / np.sum((y - np.mean(y))**2) if np.var(y)>0 else 0
-                        lr_tuple.append((intercept, slope, r2))
-                    else:
-                        lr_tuple.append((1.0, 0.0, 0.0))
-                    
-                    # Weighted Last 3
-                    if len(values) >= 3:
-                        wln.append(np.mean(values[-3:]))
-                    elif values:
-                        wln.append(np.mean(values))
-                    else:
-                        wln.append(1.0)
-                
-                # Stability Diagnostics
-                cvs = []
-                for j in range(n_d-1):
-                    values = []
-                    for i in range(n_ay):
-                        if i+j+1 < n_ay:
-                            c = wc.iloc[i,j]
-                            if c > 0:
-                                values.append(wc.iloc[i,j+1]/c)
-                    if len(values) >= 2:
-                        cvs.append(np.std(values) / np.mean(values))
-                    else:
-                        cvs.append(0.0)
-                mean_cv = np.mean(cvs) if cvs else 0.0
-
-                # LDF Selection UI
-                st.subheader(f"LDF Selection for {lob}")
-                factor_df = pd.DataFrame({
-                    "Dev Period": range(1, len(vw)+1),
-                    "Vol-Weighted": vw, 
-                    "Simple Avg": sa, 
-                    "Geometric": geo,
-                    "Medial Avg": med, 
-                    "Lin Reg (Int/Slp)": [f"{x[0]:.4f}/{x[1]:.4f}" for x in lr_tuple], 
-                    "Wtd Last 3": wln
-                })
-                st.dataframe(factor_df, width='stretch')
-                st.write(f"**Stability Diagnostics:** Mean CV: {mean_cv:.2%} | R²: {lr_tuple[0][2]:.4f}")
-                
-                # Recommendation (Simplified)
-                recs = ["Volume-Weighted", "Simple Average", "Geometric", "Medial Average", "Linear Regression", "Weighted Last 3"]
-                st.info(f"**Recommendation:** {recs[0]} — Due to low instability")
-
-                selected_method = st.selectbox(
-                    "Select LDF Method",
-                    ["Volume-Weighted", "Simple Average", "Geometric", "Medial Average", "Linear Regression", "Weighted Last 3"],
-                    key=f"bcl_method_{lob}"
-                )
-                
-                if selected_method == "Volume-Weighted": chosen = vw
-                elif selected_method == "Simple Average": chosen = sa
-                elif selected_method == "Geometric": chosen = geo
-                elif selected_method == "Medial Average": chosen = med
-                elif selected_method == "Linear Regression": chosen = [x[0] for x in lr_tuple] # Use intercept
-                elif selected_method == "Weighted Last 3": chosen = wln
-                else: chosen = vw
-
-                # Project and Discount
-                completed = wc.copy().astype(float)
+                        if i+j+1<n_ay:
+                            c=wc.iloc[i,j]; nxt=wc.iloc[i,j+1]
+                            if c>0: num+=nxt; den+=c
+                    factors.append(num/den if den>0 else 1.0)
+                cdfs=[]; run=1.0
+                for f in reversed(factors): run*=f; cdfs.insert(0,run)
+                completed=wc.copy().astype(float)
                 for i in range(n_ay):
                     lo=-1
                     for j in range(n_d-1,-1,-1):
                         if i+j<n_ay: lo=j; break
                     if lo<0: continue
                     for j in range(lo,n_d-1):
-                        if j<len(chosen):
-                            p=completed.iloc[i,j]; completed.iloc[i,j+1]=p*chosen[j] if p>0 else 0.0
-
-                if use_discounting:
-                    disc_factors = []
-                    if disc_method == "Yield Curve" and spot_rates is not None:
-                        for t in range(1, n_d+1):
-                            if t-1 < len(spot_rates): disc_factors.append(1/((1+spot_rates[t-1])**t))
-                            else: disc_factors.append(1/((1+spot_rates[-1])**t))
-                    elif flat_rate is not None:
-                        disc_factors = [(1/(1+flat_rate))**t for t in range(1, n_d+1)]
-                    
-                    for i in range(n_ay):
-                        for j in range(n_d):
-                            if j < len(disc_factors):
-                                completed.iloc[i,j] = completed.iloc[i,j] * disc_factors[j]
-
-                # Calculate IBNR
-                ibnr_total = 0.0
+                        if j<len(factors):
+                            p=completed.iloc[i,j]; completed.iloc[i,j+1]=p*factors[j] if p>0 else 0.0
                 for i in range(n_ay):
                     lo=-1
                     for j in range(n_d-1,-1,-1):
                         if i+j<n_ay: lo=j; break
-                    if lo>=0:
-                        cur = wc.iloc[i,lo]
-                        ult = completed.iloc[i,n_d-1]
-                        ibnr = max(ult-cur, 0.0)
-                        ibnr_total += ibnr
-                        cdf = 1.0
-                        for f in reversed(chosen[lo:]):
-                            cdf *= f
-                        all_rows.append({
-                            'LOB': lob,
-                            'Accident_Period': str(from_dt.year + i//ppy) + (f"-Q{(i%ppy)+1}" if grain_code!="Y" else ""),
-                            'Developed_Periods': lo,
-                            'CDF': cdf,
-                            'Current_Claims': cur,
-                            'Ultimate': ult,
-                            'IBNR': ibnr
-                        })
+                    if lo<0: continue
+                    cur=wc.iloc[i,lo]; ult=completed.iloc[i,n_d-1]
+                    ibnr=max(ult-cur,0.0)
+                    cdf=cdfs[lo] if lo<len(cdfs) else 1.0
+                    all_rows.append({'LOB':lob,'Accident_Period':ap_label(i),'Developed_Periods':lo,'CDF':cdf,'Current_Claims':cur,'Ultimate':ult,'IBNR':ibnr})
 
             result = pd.DataFrame(all_rows)
             summary = result.groupby('LOB')[['Current_Claims','Ultimate','IBNR']].sum().reset_index()
-            
             st.subheader("BCL IBNR Summary by LOB")
             disp=summary.copy()
             for c in ['Current_Claims','Ultimate','IBNR']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
             st.dataframe(disp, width='stretch', hide_index=True)
-            
             st.subheader("Detail by Accident Period")
             disp2=result.copy()
             for c in ['CDF','Current_Claims','Ultimate','IBNR']:
                 disp2[c]=disp2[c].apply(lambda x:f"{x:,.4f}" if c=='CDF' else f"{x:,.2f}")
             st.dataframe(disp2, width='stretch', hide_index=True)
-
             output=BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as w:
                 summary.to_excel(w,index=False,sheet_name='BCL_Summary')
@@ -958,6 +787,7 @@ def render_mack_calculator():
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="mck_cn").strip()
     with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.9,75.0,1.0,key="mck_cl")/100
+    from scipy.stats import norm
     z=norm.ppf(confidence)
     with c3: st.info(f"z-score: {z:.3f}")
     uploaded=st.file_uploader("Upload claims triangle (cumulative, CSV/Excel — rows=AY, cols=Dev)",type=["csv","xlsx","xls"],key="mck_f")
