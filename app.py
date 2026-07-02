@@ -13,12 +13,12 @@ from io import BytesIO
 from datetime import date, datetime
 import re
 from scipy import interpolate
-import sys
-import os
 
 # =============================================================================
-#  PATH FIXER (Match your exact GitHub folder names)
+#  PATH FIXER (Crucial for Streamlit Cloud to find your folders)
 # =============================================================================
+import sys
+import os
 
 # Get the absolute path where app.py is running
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +43,11 @@ sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", 
 sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "RA_Calculators"))
 sys.path.insert(0, os.path.join(BASE_DIR, "utils"))
 
+
+# =============================================================================
+#  DATETIME UTILITIES
+# =============================================================================
+
 def _parse_dates(series):
     """Safely parse any column to datetime regardless of source dtype."""
     try:
@@ -59,6 +64,133 @@ def _date_filter(df, col, from_date, to_date):
     fd = pd.Timestamp(from_date)
     td = pd.Timestamp(to_date)
     return df[(df[col] >= fd) & (df[col] <= td)]
+
+
+# =============================================================================
+#  INFLATION & DISCOUNTING UTILITIES (From your reference script)
+# =============================================================================
+
+def periods_per_year(grain): 
+    return {"Y": 1, "Q": 4, "M": 12}[grain]
+
+def load_inflation_data_interactive(grain_code, ppy):
+    st.markdown("**Load Inflation Data**")
+    inf_file = st.file_uploader("Upload Inflation Curve (Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{st.session_state.page}")
+    cum_inflation = None; per_period_rates = None
+    if inf_file:
+        inf_df = pd.read_csv(inf_file) if inf_file.name.endswith('.csv') else pd.read_excel(inf_file)
+        p_col = st.selectbox("Period column", inf_df.columns, key=f"inf_p_{st.session_state.page}")
+        r_col = st.selectbox("Rate column", inf_df.columns, key=f"inf_r_{st.session_state.page}")
+        inf_df = inf_df[[p_col, r_col]].dropna()
+        inf_df[r_col] = pd.to_numeric(inf_df[r_col], errors='coerce') / 100.0
+        rates_inf = inf_df[r_col].values
+        ratio = ppy / periods_per_year(grain_code)
+        x_inf = np.arange(len(rates_inf)) * ratio
+        x_tgt = np.arange(int(x_inf[-1]) + 1)
+        if len(x_inf) >= 4:
+            f_interp = interpolate.CubicSpline(x_inf, rates_inf, extrapolate=True)
+        else:
+            f_interp = interpolate.interp1d(x_inf, rates_inf, kind='linear', fill_value='extrapolate')
+        annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
+        per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
+        cum_inflation = np.cumprod(1 + per_period_rates)
+        st.success(f"Inflation interpolated.")
+    return cum_inflation, per_period_rates
+
+def load_discounting_data_interactive(grain_code, ppy):
+    st.markdown("**Load Discounting Data**")
+    disc_method = st.radio("Discounting Method", ["Yield Curve", "Single Flat Rate"], key=f"disc_m_{st.session_state.page}")
+    spot_rates = None; flat_rate = None
+    if disc_method == "Yield Curve":
+        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate)", type=["csv","xlsx","xls"], key=f"yc_{st.session_state.page}")
+        if yc_file:
+            yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
+            m_col = st.selectbox("Maturity column", yc_df.columns, key=f"yc_m_{st.session_state.page}")
+            r_col = st.selectbox("Rate column", yc_df.columns, key=f"yc_r_{st.session_state.page}")
+            yc_df = yc_df[[m_col, r_col]].dropna()
+            yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
+            yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
+            maturities = yc_df[m_col].values; rates = yc_df[r_col].values
+            if len(maturities) >= 4:
+                f_interp = interpolate.CubicSpline(maturities, rates, extrapolate=True)
+            else:
+                f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
+            period_maturities = np.arange(1, 61) / ppy
+            spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
+            st.success(f"Yield Curve interpolated.")
+    else:
+        flat_rate = st.number_input("Annual Discount Rate (%)", 0.0, 50.0, 5.0, 0.5, key=f"flat_{st.session_state.page}") / 100.0
+    return spot_rates, flat_rate
+
+def apply_inflation_to_triangle(inc, cum, n_periods, cum_inflation):
+    if cum_inflation is not None:
+        real_inc = inc.copy().astype(float)
+        real_cum = cum.copy().astype(float)
+        valuation_idx = n_periods - 1
+        if len(cum_inflation) <= valuation_idx:
+            last_val = cum_inflation[-1] if len(cum_inflation) > 0 else 1.0
+            cum_inflation = np.append(cum_inflation, [last_val] * (valuation_idx - len(cum_inflation) + 1))
+        inf_val = cum_inflation[valuation_idx]
+        for ap in inc.index:
+            for dp in inc.columns:
+                if ap+dp >= n_periods: continue
+                val = inc.loc[ap, dp]
+                if pd.isna(val): continue
+                t = ap+dp
+                inf_t = cum_inflation[min(t, len(cum_inflation)-1)]
+                deflation_factor = inf_val/inf_t if inf_t>0 else 1.0
+                real_inc.loc[ap, dp] = val * deflation_factor
+        # Rebuild cumulative
+        for ap in real_inc.index:
+            has_obs = any(pd.notna(real_inc.loc[ap, dp]) for dp in real_inc.columns if ap+dp<n_periods)
+            if not has_obs:
+                real_cum.loc[ap] = np.nan; continue
+            running = 0.0
+            for dp in sorted(real_inc.columns):
+                if ap+dp < n_periods:
+                    v = real_inc.loc[ap, dp]
+                    running += v if pd.notna(v) else 0.0
+                    real_cum.loc[ap, dp] = running
+                else:
+                    real_cum.loc[ap, dp] = np.nan
+        return real_inc, real_cum
+    return inc, cum
+
+def apply_discounting_to_triangle(completed, cum, n_periods, grain_code, ppy, spot_rates, flat_rate):
+    dp_cols = sorted(completed.columns)
+    discounted_results = []
+    for ap in completed.index:
+        last_obs = -1
+        for dp in sorted(cum.columns, reverse=True):
+            if ap+dp < n_periods:
+                val = cum.loc[ap, dp]
+                if pd.notna(val) and val > 0: last_obs = dp; break
+        if last_obs < 0 or last_obs >= max(dp_cols):
+            discounted_results.append({"AP": ap, "Nominal_IBNR": 0.0, "Discounted_IBNR": 0.0})
+            continue
+        total_nominal = 0.0; total_discounted = 0.0
+        for idx_dp, dp in enumerate(dp_cols):
+            if dp <= last_obs: continue
+            cum_curr = completed.loc[ap, dp]
+            if pd.isna(cum_curr): continue
+            if idx_dp > 0:
+                cum_prev = completed.loc[ap, dp_cols[idx_dp-1]]
+                inc_payment = max(float(cum_curr) - float(cum_prev if pd.notna(cum_prev) else 0.0), 0.0)
+            else:
+                inc_payment = max(float(cum_curr), 0.0)
+            if inc_payment <= 0.0: continue
+            periods_ahead = dp - last_obs
+            years_ahead = periods_ahead / ppy
+            if spot_rates is not None:
+                idx = min(int(periods_ahead)-1, len(spot_rates)-1)
+                r = float(spot_rates[max(idx, 0)])
+            else:
+                r = float(flat_rate)
+            df_factor = 1.0 / (1.0 + r) ** years_ahead
+            total_nominal += inc_payment
+            total_discounted += inc_payment * df_factor
+        discounted_results.append({"AP": ap, "Nominal_IBNR": total_nominal, "Discounted_IBNR": total_discounted})
+    return pd.DataFrame(discounted_results)
 
 
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="expanded")
@@ -142,42 +274,6 @@ def map_columns(df, required_fields, file_label):
                     default_idx = all_cols.index(default_val) if default_val in all_cols else 0
                     mapped[field] = st.selectbox(f"{field}", all_cols, index=default_idx, key=f"fv_map_{file_label}_{field}")
     return mapped
-
-# =============================================================================
-#  IMPORT ALL ENGINES FROM YOUR FOLDERS (MATCHING YOUR GITHUB FOLDERS)
-# =============================================================================
-
-# --- LRC CALCULATORS (Using Underscores to match GitHub) ---
-from LRC_Calculators.upr_engine import calculate_upr
-from LRC_Calculators.loss_component_engine import calculate_loss_component
-
-# --- LIC CALCULATORS ---
-from LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine import calculate_ocr
-
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr import calculate_percentage_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr import calculate_bcl_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr import calculate_bf_ibnr
-
-from LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
-from LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
-
-from LIC_Calculators.RA_Calculators.mack_ra import calculate_mack_chain_ladder
-from LIC_Calculators.RA_Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
-
-# --- SHARED HELPERS ---
-from utils.actuarial_helpers import (
-    build_triangles, volume_weighted_factors, simple_average_factors,
-    geometric_average_factors, medial_average_factors, linear_regression_factors,
-    weighted_last_n_factors, stability_diagnostics, recommend_factors,
-    compute_cdfs, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle,
-    period_index, period_label, periods_per_year
-)
-
-# --- FULL VALUATION ---
-from Full_Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
-
 
 # =============================================================================
 #  NAVIGATION MENUS
@@ -374,135 +470,8 @@ def render_ocr_calculator():
     back_button('fulfilment_cashflows', ['Home','LIC','Fulfilment Cashflows'])
 
 # =============================================================================
-#  IBNR CALCULATORS WITH INFLATION & DISCOUNTING (From your advanced script)
+#  BCL CALCULATOR WITH INFLATION & DISCOUNTING (From your reference script)
 # =============================================================================
-
-# =============================================================================
-#  UTILITY FUNCTIONS FOR INFLATION & DISCOUNTING
-# =============================================================================
-
-def periods_per_year(grain):
-    return {"Y": 1, "Q": 4, "M": 12}[grain]
-
-def _load_inflation_data_interactive(grain_code, ppy):
-    st.markdown("**Upload Inflation Data**")
-    inf_file = st.file_uploader("Upload Inflation Curve (Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{st.session_state.page}")
-    cum_inflation = None; per_period_rates = None
-    if inf_file:
-        inf_df = pd.read_csv(inf_file) if inf_file.name.endswith('.csv') else pd.read_excel(inf_file)
-        p_col = st.selectbox("Period column", inf_df.columns, key=f"inf_p_{st.session_state.page}")
-        r_col = st.selectbox("Rate column", inf_df.columns, key=f"inf_r_{st.session_state.page}")
-        inf_df = inf_df[[p_col, r_col]].dropna()
-        inf_df[r_col] = pd.to_numeric(inf_df[r_col], errors='coerce') / 100.0
-        rates_inf = inf_df[r_col].values
-        ratio = ppy / periods_per_year(grain_code) # Assuming uploaded data is Yearly
-        x_inf = np.arange(len(rates_inf)) * ratio
-        x_tgt = np.arange(int(x_inf[-1]) + 1)
-        if len(x_inf) >= 4:
-            f_interp = interpolate.CubicSpline(x_inf, rates_inf, extrapolate=True)
-        else:
-            f_interp = interpolate.interp1d(x_inf, rates_inf, kind='linear', fill_value='extrapolate')
-        annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
-        per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
-        cum_inflation = np.cumprod(1 + per_period_rates)
-        st.success(f"Inflation interpolated.")
-    return cum_inflation, per_period_rates
-
-def _load_discounting_data_interactive(grain_code, ppy):
-    st.markdown("**Upload Discounting Data**")
-    disc_method = st.radio("Discounting Method", ["Yield Curve", "Single Flat Rate"], key=f"disc_m_{st.session_state.page}")
-    spot_rates = None; flat_rate = None
-    if disc_method == "Yield Curve":
-        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate)", type=["csv","xlsx","xls"], key=f"yc_{st.session_state.page}")
-        if yc_file:
-            yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
-            m_col = st.selectbox("Maturity column", yc_df.columns, key=f"yc_m_{st.session_state.page}")
-            r_col = st.selectbox("Rate column", yc_df.columns, key=f"yc_r_{st.session_state.page}")
-            yc_df = yc_df[[m_col, r_col]].dropna()
-            yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
-            yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
-            maturities = yc_df[m_col].values; rates = yc_df[r_col].values
-            if len(maturities) >= 4:
-                f_interp = interpolate.CubicSpline(maturities, rates, extrapolate=True)
-            else:
-                f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
-            period_maturities = np.arange(1, 61) / ppy
-            spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
-            st.success(f"Yield Curve interpolated.")
-    else:
-        flat_rate = st.number_input("Annual Discount Rate (%)", 0.0, 50.0, 5.0, 0.5, key=f"flat_{st.session_state.page}") / 100.0
-    return spot_rates, flat_rate
-
-def apply_inflation_to_triangle(inc, cum, n_periods, cum_inflation):
-    if cum_inflation is not None:
-        real_inc = inc.copy().astype(float)
-        real_cum = cum.copy().astype(float)
-        valuation_idx = n_periods - 1
-        if len(cum_inflation) <= valuation_idx:
-            last_val = cum_inflation[-1] if len(cum_inflation) > 0 else 1.0
-            cum_inflation = np.append(cum_inflation, [last_val] * (valuation_idx - len(cum_inflation) + 1))
-        inf_val = cum_inflation[valuation_idx]
-        for ap in inc.index:
-            for dp in inc.columns:
-                if ap+dp >= n_periods: continue
-                val = inc.loc[ap, dp]
-                if pd.isna(val): continue
-                t = ap+dp
-                inf_t = cum_inflation[min(t, len(cum_inflation)-1)]
-                deflation_factor = inf_val/inf_t if inf_t>0 else 1.0
-                real_inc.loc[ap, dp] = val * deflation_factor
-        # Rebuild cumulative
-        for ap in real_inc.index:
-            has_obs = any(pd.notna(real_inc.loc[ap, dp]) for dp in real_inc.columns if ap+dp<n_periods)
-            if not has_obs:
-                real_cum.loc[ap] = np.nan; continue
-            running = 0.0
-            for dp in sorted(real_inc.columns):
-                if ap+dp < n_periods:
-                    v = real_inc.loc[ap, dp]
-                    running += v if pd.notna(v) else 0.0
-                    real_cum.loc[ap, dp] = running
-                else:
-                    real_cum.loc[ap, dp] = np.nan
-        return real_inc, real_cum
-    return inc, cum
-
-def apply_discounting_to_triangle(completed, cum, n_periods, grain_code, ppy, spot_rates, flat_rate):
-    dp_cols = sorted(completed.columns)
-    discounted_results = []
-    for ap in completed.index:
-        last_obs = -1
-        for dp in sorted(cum.columns, reverse=True):
-            if ap+dp < n_periods:
-                val = cum.loc[ap, dp]
-                if pd.notna(val) and val > 0: last_obs = dp; break
-        if last_obs < 0 or last_obs >= max(dp_cols):
-            discounted_results.append({"AP": ap, "Nominal_IBNR": 0.0, "Discounted_IBNR": 0.0})
-            continue
-        total_nominal = 0.0; total_discounted = 0.0
-        for idx_dp, dp in enumerate(dp_cols):
-            if dp <= last_obs: continue
-            cum_curr = completed.loc[ap, dp]
-            if pd.isna(cum_curr): continue
-            if idx_dp > 0:
-                cum_prev = completed.loc[ap, dp_cols[idx_dp-1]]
-                inc_payment = max(float(cum_curr) - float(cum_prev if pd.notna(cum_prev) else 0.0), 0.0)
-            else:
-                inc_payment = max(float(cum_curr), 0.0)
-            if inc_payment <= 0.0: continue
-            periods_ahead = dp - last_obs
-            years_ahead = periods_ahead / ppy
-            if spot_rates is not None:
-                idx = min(int(periods_ahead)-1, len(spot_rates)-1)
-                r = float(spot_rates[max(idx, 0)])
-            else:
-                r = float(flat_rate)
-            df_factor = 1.0 / (1.0 + r) ** years_ahead
-            total_nominal += inc_payment
-            total_discounted += inc_payment * df_factor
-        discounted_results.append({"AP": ap, "Nominal_IBNR": total_nominal, "Discounted_IBNR": total_discounted})
-    return pd.DataFrame(discounted_results)
-
 
 def render_bcl_calculator():
     show_breadcrumb()
@@ -542,7 +511,7 @@ def render_bcl_calculator():
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
 
-        # ---- INFLATION & DISCOUNTING ----
+        # ===== INFLATION & DISCOUNTING INPUTS =====
         st.markdown("#### Step 3: Inflation & Discounting Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bcl_inf")
@@ -550,11 +519,11 @@ def render_bcl_calculator():
 
         cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
         if use_inflation:
-            cum_inflation, per_period_rates = _load_inflation_data_interactive(grain_code, ppy)
+            cum_inflation, per_period_rates = load_inflation_data_interactive(grain_code, ppy)
         if use_discounting:
-            spot_rates, flat_rate = _load_discounting_data_interactive(grain_code, ppy)
+            spot_rates, flat_rate = load_discounting_data_interactive(grain_code, ppy)
 
-        # ---- CORE LOGIC ----
+        # ===== CORE LOGIC =====
         if st.button("Calculate BCL IBNR", key="bcl_run", width='stretch'):
             lobs = sorted(df[lob_col].dropna().unique())
             n_periods = (to_date.year - from_date.year) * ppy + 1
@@ -587,7 +556,7 @@ def render_bcl_calculator():
                             v=inc.loc[i,j]; r+=v if pd.notna(v) else 0.0; cum.loc[i,j]=r
                         else: cum.loc[i,j]=np.nan
 
-                # Apply Inflation/Deflation
+                # ===== APPLY INFLATION =====
                 if use_inflation and cum_inflation is not None:
                     inc, cum = apply_inflation_to_triangle(inc, cum, n_periods, cum_inflation)
 
@@ -613,11 +582,10 @@ def render_bcl_calculator():
                         if j<len(factors):
                             p=completed.iloc[i,j]; completed.iloc[i,j+1]=p*factors[j] if p>0 else 0.0
 
-                # Apply Discounting
+                # ===== APPLY DISCOUNTING =====
                 if use_discounting:
                     disc_df = apply_discounting_to_triangle(completed, cum, n_periods, grain_code, ppy, spot_rates, flat_rate)
                     disc_df = disc_df.set_index("AP")
-                    # TODO: Map discounted IBNR back
                 else:
                     disc_df = pd.DataFrame()
 
@@ -672,10 +640,9 @@ def render_bcl_calculator():
 
     back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
-
 def render_capecod_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>Uses earned premiums to derive an implied ELR</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>Uses earned premiums to derive an implied ELR; more responsive than fixed-ELR BF</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="cc_cn").strip()
@@ -697,27 +664,12 @@ def render_capecod_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="cc_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="cc_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="cc_amt")
-        
         df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
         df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
         df=df.dropna(subset=[loss_col,rep_col])
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=_date_filter(df, loss_col, from_date, to_date)
-
-        # ---- INFLATION & DISCOUNTING ----
-        st.markdown("#### Inflation & Discounting Adjustments")
-        c1, c2 = st.columns(2)
-        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
-        with c2: use_discounting = st.checkbox("Apply Discounting", key="cc_disc")
-
-        grain = "Y"; ppy = 1  # For premiums
-        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-        if use_inflation:
-            cum_inflation, per_period_rates = _load_inflation_data_interactive(grain, ppy)
-        if use_discounting:
-            spot_rates, flat_rate = _load_discounting_data_interactive(grain, ppy)
-
         if st.button("Calculate Cape Cod IBNR",key="cc_run",width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique()); rows=[]
             for lob in lobs:
@@ -751,6 +703,7 @@ def render_capecod_calculator():
                 if lob in prem_df.columns:
                     vals=pd.to_numeric(prem_df[lob],errors='coerce').fillna(0).tolist()
                     for i,v in enumerate(vals): prems[i]=v
+                # Cape Cod: ELR = sum(actual claims) / sum(expected_premium * pct_developed)
                 num_elr=den_elr=0.0
                 for i in range(n_ay):
                     lo=-1
@@ -789,7 +742,6 @@ def render_capecod_calculator():
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
-
 def render_bf_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) IBNR</h1><p>Expected + Actual blend using user-supplied ELR per portfolio</p></div>', unsafe_allow_html=True)
@@ -812,7 +764,6 @@ def render_bf_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
         with c4: amt_col=st.selectbox("Amount",cols,key="bf_amt")
-        
         df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
         df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
         df[amt_col]=pd.to_numeric(df[amt_col],errors='coerce').fillna(0)
@@ -829,20 +780,6 @@ def render_bf_calculator():
         if prem_file is not None:
             prem_data=pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
             prem_data.columns=prem_data.columns.astype(str).str.strip()
-
-        # ---- INFLATION & DISCOUNTING ----
-        st.markdown("#### Inflation & Discounting Adjustments")
-        c1, c2 = st.columns(2)
-        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
-        with c2: use_discounting = st.checkbox("Apply Discounting", key="bf_disc")
-
-        grain = "Y"; ppy = 1
-        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-        if use_inflation:
-            cum_inflation, per_period_rates = _load_inflation_data_interactive(grain, ppy)
-        if use_discounting:
-            spot_rates, flat_rate = _load_discounting_data_interactive(grain, ppy)
-
         if st.button("Calculate BF IBNR",key="bf_run",width='stretch'):
             all_rows=[]; summ_rows=[]
             for lob in lobs:
@@ -909,6 +846,118 @@ def render_bf_calculator():
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
+def render_ulae_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>ULAE Calculator</h1><p>Paid-to-Paid method: ULAE = ratio × (0.5×OCR + IBNR)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1: client_name=st.text_input("Client","Client",key="ulae_cn").strip()
+    with c2: ulae_ratio=st.number_input("ULAE Ratio (%)",0.0,30.0,5.0,0.5,key="ulae_rt")/100
+    with c3: basis=st.selectbox("Allocation Basis",["Per Portfolio","Aggregated"],key="ulae_bs")
+    uploaded=st.file_uploader("Upload reserves file (LOB | OCR | IBNR)",type=["csv","xlsx","xls"],key="ulae_f")
+    if uploaded is None:
+        st.info("Upload file with LOB, OCR, and IBNR columns.")
+        back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows']); return
+    try:
+        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df.columns=df.columns.astype(str).str.strip()
+        st.dataframe(df.head(5),width='stretch')
+        cols=df.columns.tolist()
+        c1,c2,c3=st.columns(3)
+        with c1: lob_col=st.selectbox("LOB",cols,key="ulae_lob")
+        with c2: ocr_col=st.selectbox("OCR",cols,key="ulae_ocr")
+        with c3: ibnr_col=st.selectbox("IBNR",cols,key="ulae_ibnr")
+        prem_col=None
+        if basis=="Aggregated":
+            with st.columns(2)[0]: prem_col=st.selectbox("Premium (for aggregated split)",cols,key="ulae_prem")
+        if st.button("Calculate ULAE",key="ulae_run",width='stretch'):
+            df[ocr_col]=pd.to_numeric(df[ocr_col],errors='coerce').fillna(0)
+            df[ibnr_col]=pd.to_numeric(df[ibnr_col],errors='coerce').fillna(0)
+            df['ULAE_Base']=0.5*df[ocr_col]+df[ibnr_col]
+            if basis=="Aggregated" and prem_col:
+                df[prem_col]=pd.to_numeric(df[prem_col],errors='coerce').fillna(0)
+                tot_prem=df[prem_col].sum()
+                df['Pct']=df[prem_col]/tot_prem if tot_prem>0 else 1/len(df)
+                total_ulae=df['ULAE_Base'].sum()*ulae_ratio
+                df['ULAE']=total_ulae*df['Pct']
+            else:
+                df['ULAE']=df['ULAE_Base']*ulae_ratio
+            res=df[[lob_col,ocr_col,ibnr_col,'ULAE_Base','ULAE']].copy()
+            st.subheader("ULAE Results")
+            disp=res.copy()
+            for c in [ocr_col,ibnr_col,'ULAE_Base','ULAE']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
+            st.dataframe(disp,width='stretch',hide_index=True)
+            st.metric("Total ULAE",f"{df['ULAE'].sum():,.2f}")
+            output=BytesIO()
+            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='ULAE_Results')
+            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download ULAE Results",data=output,file_name=f"{sc}_ULAE.xlsx",key="ulae_dl")
+    except Exception as e: st.error(f"Error: {e}")
+    back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows'])
+
+def render_npr_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Reinsurance Non-Performance Risk (NPR)</h1><p>IFRS 17 Para 63(e) — NPR = PD × Reinsurer Share × Ceded LIC</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2=st.columns(2)
+    with c1: client_name=st.text_input("Client","Client",key="npr_cn").strip()
+    with c2: basis=st.selectbox("Share Basis",["Aggregation (overall share)","Per Portfolio"],key="npr_bs")
+    st.markdown("#### Reinsurer Data (Name | Credit_Rating | PD | Share columns)")
+    ri_file=st.file_uploader("Upload Reinsurer file",type=["csv","xlsx","xls"],key="npr_rf")
+    st.markdown("#### Ceded LIC Data (Portfolio | Ceded_IBNR | Ceded_OCR  OR  Portfolio | Total_Ceded_LIC)")
+    lic_file=st.file_uploader("Upload Ceded LIC file",type=["csv","xlsx","xls"],key="npr_lf")
+    if ri_file is None or lic_file is None:
+        st.info("Upload both Reinsurer and Ceded LIC files.")
+        back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows']); return
+    try:
+        ri_df=pd.read_csv(ri_file) if ri_file.name.endswith('.csv') else pd.read_excel(ri_file)
+        ri_df.columns=ri_df.columns.astype(str).str.strip()
+        lic_df=pd.read_csv(lic_file) if lic_file.name.endswith('.csv') else pd.read_excel(lic_file)
+        lic_df.columns=lic_df.columns.astype(str).str.strip()
+        st.dataframe(ri_df.head(3),width='stretch')
+        st.dataframe(lic_df.head(3),width='stretch')
+        rc=ri_df.columns.tolist(); lc=lic_df.columns.tolist()
+        c1,c2,c3=st.columns(3)
+        with c1: name_col=st.selectbox("Reinsurer Name",rc,key="npr_rn")
+        with c2: pd_col=st.selectbox("PD (decimal)",rc,key="npr_pd")
+        with c3: share_col=st.selectbox("Overall Share (decimal)",rc,key="npr_sh")
+        c1,c2,c3=st.columns(3)
+        with c1: port_col=st.selectbox("Portfolio",lc,key="npr_pc")
+        with c2: lic_fmt=st.selectbox("LIC Format",["Separate IBNR+OCR","Total LIC only"],key="npr_fmt")
+        if lic_fmt=="Separate IBNR+OCR":
+            with c3: ibnr_c=st.selectbox("Ceded IBNR",lc,key="npr_ibnr")
+            ocr_c=st.selectbox("Ceded OCR",lc,key="npr_ocr")
+        else:
+            with c3: total_c=st.selectbox("Total Ceded LIC",lc,key="npr_tot")
+        if st.button("Calculate NPR",key="npr_run",width='stretch'):
+            ri_df[pd_col]=pd.to_numeric(ri_df[pd_col],errors='coerce').fillna(0)
+            ri_df[share_col]=pd.to_numeric(ri_df[share_col],errors='coerce').fillna(0)
+            if lic_fmt=="Separate IBNR+OCR":
+                lic_df[ibnr_c]=pd.to_numeric(lic_df[ibnr_c],errors='coerce').fillna(0)
+                lic_df[ocr_c]=pd.to_numeric(lic_df[ocr_c],errors='coerce').fillna(0)
+                lic_df['Total_LIC']=lic_df[ibnr_c]+lic_df[ocr_c]
+            else:
+                lic_df['Total_LIC']=pd.to_numeric(lic_df[total_c],errors='coerce').fillna(0)
+            rows=[]
+            for _,ri in ri_df.iterrows():
+                for _,lic in lic_df.iterrows():
+                    npr=ri[pd_col]*ri[share_col]*lic['Total_LIC']
+                    rows.append({'Reinsurer':ri[name_col],'Portfolio':lic[port_col],'PD':ri[pd_col],'Share':ri[share_col],'Total_LIC':lic['Total_LIC'],'NPR':npr})
+            res=pd.DataFrame(rows)
+            by_port=res.groupby('Portfolio')['NPR'].sum().reset_index()
+            by_ri=res.groupby('Reinsurer')['NPR'].sum().reset_index()
+            st.subheader("NPR by Portfolio"); disp=by_port.copy(); disp['NPR']=disp['NPR'].apply(lambda x:f"{x:,.2f}"); st.dataframe(disp,width='stretch',hide_index=True)
+            st.subheader("NPR by Reinsurer"); disp2=by_ri.copy(); disp2['NPR']=disp2['NPR'].apply(lambda x:f"{x:,.2f}"); st.dataframe(disp2,width='stretch',hide_index=True)
+            st.metric("Total NPR",f"{res['NPR'].sum():,.2f}")
+            output=BytesIO()
+            with pd.ExcelWriter(output,engine='openpyxl') as w:
+                by_port.to_excel(w,index=False,sheet_name='NPR_by_Portfolio')
+                by_ri.to_excel(w,index=False,sheet_name='NPR_by_Reinsurer')
+                res.to_excel(w,index=False,sheet_name='NPR_Detail')
+            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download NPR Results",data=output,file_name=f"{sc}_NPR.xlsx",key="npr_dl")
+    except Exception as e: st.error(f"Error: {e}")
+    back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows'])
 
 def render_mack_calculator():
     show_breadcrumb()
@@ -993,7 +1042,6 @@ def render_mack_calculator():
         st.error(f"Error: {e}")
         import traceback; st.write(traceback.format_exc())
     back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
-
 
 def render_bootstrap_calculator():
     show_breadcrumb()
