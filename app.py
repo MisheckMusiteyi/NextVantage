@@ -15,33 +15,98 @@ import re
 from scipy import interpolate
 
 # =============================================================================
-#  PATH FIXER (Crucial for Streamlit Cloud to find your folders)
+#  BULLETPROOF PATH & IMPORT SYSTEM (Handles spaces AND underscores)
 # =============================================================================
 import sys
 import os
+import importlib
 
 # Get the absolute path where app.py is running
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Add all your crucial folders to Python's search path
+# Add all possible folder variations to Python's search path
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-# Add the specific folder that is causing the ModuleNotFoundError
-full_valuation_path = os.path.join(BASE_DIR, "Full_Valuation")
-if full_valuation_path not in sys.path:
-    sys.path.insert(0, full_valuation_path)
+# List of folder names in your project (try both space and underscore versions)
+folder_variations = [
+    ("Full_Valuation", "Full Valuation"),
+    ("LRC_Calculators", "LRC Calculators"),
+    ("LIC_Calculators", "LIC Calculators"),
+    ("FCF_Calculators", "FCF Calculators"),
+    ("OCR_Calculators", "OCR Calculators"),
+    ("IBNR_Calculators", "IBNR Calculators"),
+    ("ULAE_Calculators", "ULAE Calculators"),
+    ("NPR_Calculators", "NPR Calculators"),
+    ("RA_Calculators", "RA Calculators"),
+    ("utils", "utils")
+]
 
-# Also ensure your shared utils and LRC/LIC folders are available
-sys.path.insert(0, os.path.join(BASE_DIR, "LRC_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "OCR_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "IBNR_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "ULAE_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "FCF_Calculators", "NPR_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "LIC_Calculators", "RA_Calculators"))
-sys.path.insert(0, os.path.join(BASE_DIR, "utils"))
+# Add every possible path variation to sys.path
+for var_tuple in folder_variations:
+    for var in var_tuple:
+        test_path = os.path.join(BASE_DIR, var)
+        if test_path not in sys.path and os.path.exists(test_path):
+            sys.path.insert(0, test_path)
+        
+        # Also add deep subfolders
+        if var in ["LIC_Calculators", "LIC Calculators"]:
+            for sub_var in ["FCF_Calculators", "FCF Calculators"]:
+                deep_path = os.path.join(BASE_DIR, var, sub_var)
+                if deep_path not in sys.path and os.path.exists(deep_path):
+                    sys.path.insert(0, deep_path)
+            
+            # OCR, IBNR, ULAE, NPR
+            for deep_calc in ["OCR_Calculators", "OCR Calculators", "IBNR_Calculators", "IBNR Calculators", 
+                              "ULAE_Calculators", "ULAE Calculators", "NPR_Calculators", "NPR Calculators"]:
+                deep_path = os.path.join(BASE_DIR, var, "FCF_Calculators", deep_calc)
+                if deep_path not in sys.path and os.path.exists(deep_path):
+                    sys.path.insert(0, deep_path)
+            
+            # RA
+            ra_path = os.path.join(BASE_DIR, var, "RA_Calculators")
+            if ra_path not in sys.path and os.path.exists(ra_path):
+                sys.path.insert(0, ra_path)
+            ra_path_space = os.path.join(BASE_DIR, var, "RA Calculators")
+            if ra_path_space not in sys.path and os.path.exists(ra_path_space):
+                sys.path.insert(0, ra_path_space)
+
+# Function to safely import modules
+def safe_import(standard_name, space_name):
+    try:
+        # Try the standard underscore version first
+        return importlib.import_module(standard_name)
+    except ModuleNotFoundError:
+        try:
+            # Fallback to space version
+            return importlib.import_module(space_name)
+        except ModuleNotFoundError:
+            return None
+
+# --- LRC CALCULATORS ---
+upr_engine = safe_import("LRC_Calculators.upr_engine", "LRC Calculators.upr_engine")
+loss_comp_engine = safe_import("LRC_Calculators.loss_component_engine", "LRC Calculators.loss_component_engine")
+
+# --- LIC CALCULATORS ---
+ocr_engine = safe_import("LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine", "LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine")
+
+ibnr_pct = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr")
+ibnr_bcl = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr")
+ibnr_cc = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr")
+ibnr_bf = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr")
+
+ulae_engine = safe_import("LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine", "LIC Calculators.FCF Calculators.ULAE Calculators.ulae_engine")
+npr_engine = safe_import("LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine", "LIC Calculators.FCF Calculators.NPR Calculators.npr_engine")
+
+# --- RA CALCULATORS ---
+mack_engine = safe_import("LIC_Calculators.RA_Calculators.mack_ra", "LIC Calculators.RA Calculators.mack_ra")
+bootstrap_engine = safe_import("LIC_Calculators.RA_Calculators.bootstrap_ra", "LIC Calculators.RA Calculators.bootstrap_ra")
+
+# --- SHARED HELPERS ---
+act_helpers = safe_import("utils.actuarial_helpers", "utils.actuarial_helpers")
+
+# --- FULL VALUATION ---
+full_engine = safe_import("Full_Valuation.full_LRC_IFRS17", "Full Valuation.full_LRC_IFRS17")
 
 
 # =============================================================================
@@ -274,38 +339,6 @@ def map_columns(df, required_fields, file_label):
                     default_idx = all_cols.index(default_val) if default_val in all_cols else 0
                     mapped[field] = st.selectbox(f"{field}", all_cols, index=default_idx, key=f"fv_map_{file_label}_{field}")
     return mapped
-
-# =============================================================================
-#  IMPORT ENGINES
-# =============================================================================
-# Note: Path fixing is done at the top using sys.path, so these imports should now work.
-from LRC_Calculators.upr_engine import calculate_upr
-from LRC_Calculators.loss_component_engine import calculate_loss_component
-
-from LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine import calculate_ocr
-
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr import calculate_percentage_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr import calculate_bcl_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr import calculate_cape_cod_ibnr
-from LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr import calculate_bf_ibnr
-
-from LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine import calculate_ulae_per_portfolio, calculate_ulae_aggregated, calculate_apportionment_percentages
-from LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine import calculate_npr_aggregation, calculate_npr_per_portfolio
-
-from LIC_Calculators.RA_Calculators.mack_ra import calculate_mack_chain_ladder
-from LIC_Calculators.RA_Calculators.bootstrap_ra import bootstrap_chain_ladder, calculate_risk_adjustment
-
-from utils.actuarial_helpers import (
-    build_triangles, volume_weighted_factors, simple_average_factors,
-    geometric_average_factors, medial_average_factors, linear_regression_factors,
-    weighted_last_n_factors, stability_diagnostics, recommend_factors,
-    compute_cdfs, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle,
-    period_index, period_label, periods_per_year
-)
-
-from Full_Valuation.full_LRC_IFRS17 import calculate_full_ifrs17_lrc
-
 
 # =============================================================================
 #  NAVIGATION MENUS
@@ -1021,6 +1054,7 @@ def render_mack_calculator():
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="mck_cn").strip()
     with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.9,75.0,1.0,key="mck_cl")/100
+    from scipy.stats import norm
     z=norm.ppf(confidence)
     with c3: st.info(f"z-score: {z:.3f}")
     uploaded=st.file_uploader("Upload claims triangle (cumulative, CSV/Excel — rows=AY, cols=Dev)",type=["csv","xlsx","xls"],key="mck_f")
