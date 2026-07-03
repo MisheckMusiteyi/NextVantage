@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # =============================================================================
-#  CAPE COD IBNR ENGINE
+#  BORNHUETTER-FERGUSON IBNR ENGINE
 #  Multi-LDF, Inflation, Discounting Support
 #  Tail factor hardcoded to 1.000 (fully developed)
 # =============================================================================
@@ -60,17 +60,16 @@ def calculate_all_ldfs(cum, n_dp):
 
     return ldfs
 
-def calculate_cape_cod_ibnr(cum_triangle, premiums, start_date, period_unit,
-                           selected_ldf_method="volume_weighted",
-                           use_inflation=False, cum_inflation=None, per_period_rates=None,
-                           use_discounting=False, spot_rates=None, flat_rate=None):
+def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
+                     selected_ldf_method="volume_weighted",
+                     use_inflation=False, cum_inflation=None, per_period_rates=None,
+                     use_discounting=False, spot_rates=None, flat_rate=None):
     n_ap, n_dp = cum_triangle.shape
 
     # 1. Get real working triangle if inflation is on
     if use_inflation and cum_inflation is not None:
         inc = cum_triangle.diff(axis=1).fillna(cum_triangle.iloc[:, 0]).fillna(0)
         _, working_cum = deflate_triangle_to_real(inc, cum_inflation, n_ap)
-        # Deflate premiums to match the real claim basis
         deflation_factor = cum_inflation[n_ap - 1] / cum_inflation[0] if cum_inflation[0] > 0 else 1.0
         working_premiums = [p / deflation_factor for p in premiums]
     else:
@@ -81,39 +80,16 @@ def calculate_cape_cod_ibnr(cum_triangle, premiums, start_date, period_unit,
     factors = calculate_all_ldfs(working_cum, n_dp)[selected_ldf_method]
     completed_real = project_ultimate(working_cum, factors)
 
-    # 3. Compute Cape Cod ELR on real basis
+    # 3. Compute BF IBNR on real basis
     cdfs = []
     run = 1.0
     for f in reversed(factors):
         run *= f
         cdfs.insert(0, run)
-    pct_developed = [1 / cdf if cdf > 0 else 1.0 for cdf in cdfs]
+    pct_unpaid = [1 - (1 / cdf) if cdf > 0 else 0 for cdf in cdfs]
 
-    developed_claims = []
-    used_up_premiums = []
-    for i in range(n_ap):
-        last_obs = -1
-        for j in range(n_dp - 1, -1, -1):
-            if i + j < n_ap and pd.notna(working_cum.iloc[i, j]):
-                last_obs = j
-                break
-        if last_obs == -1:
-            developed_claims.append(0)
-            used_up_premiums.append(0)
-            continue
-
-        current = working_cum.iloc[i, last_obs]
-        pct_dev = pct_developed[last_obs] if last_obs < len(pct_developed) else 1.0
-        developed_claims.append(current)
-        used_up_premiums.append(working_premiums[i] * pct_dev)
-
-    total_developed = sum(developed_claims)
-    total_used_up = sum(used_up_premiums)
-    cape_cod_lr = total_developed / total_used_up if total_used_up > 0 else 0
-
-    # 4. Calculate IBNR (Real)
     rows = []
-    total_ibnr = 0.0
+    total_ibnr_real = 0.0
     for i in range(n_ap):
         last_obs = -1
         for j in range(n_dp - 1, -1, -1):
@@ -123,53 +99,41 @@ def calculate_cape_cod_ibnr(cum_triangle, premiums, start_date, period_unit,
         if last_obs == -1: continue
 
         current = working_cum.iloc[i, last_obs]
-        pct_dev = pct_developed[last_obs] if last_obs < len(pct_developed) else 1.0
-        pct_unpaid = 1 - pct_dev
-        expected_ultimate = working_premiums[i] * cape_cod_lr
-        cc_ibnr_real = expected_ultimate * pct_unpaid
-        total_ibnr += cc_ibnr_real
+        expected_ultimate_real = working_premiums[i] * elr
 
+        if last_obs < len(pct_unpaid):
+            bf_ibnr_real = expected_ultimate_real * pct_unpaid[last_obs]
+        else:
+            bf_ibnr_real = 0
+
+        total_ibnr_real += bf_ibnr_real
         rows.append({
             'Accident_Period': i,
             'Accident_Period_Label': period_label(i, start_date, period_unit),
             'Current_Claims': current,
             'Premium': working_premiums[i],
-            'Pct_Developed': pct_dev * 100,
-            'Pct_Unpaid': pct_unpaid * 100,
-            'Cape_Cod_LR': cape_cod_lr,
-            'Cape_Cod_IBNR_Real': cc_ibnr_real
+            'ELR': elr,
+            'BF_IBNR_Real': bf_ibnr_real
         })
 
-    # 5. Re-inflate Real IBNR to Nominal
+    # 4. Re-inflate Real IBNR to Nominal
     if use_inflation and per_period_rates is not None:
         nominal_map = reinflate_ibnr_per_ap(completed_real, working_cum, n_ap, per_period_rates)
         for i, row in enumerate(rows):
-            row['Cape_Cod_IBNR'] = nominal_map.get(i, row['Cape_Cod_IBNR_Real'])
+            row['BF_IBNR'] = nominal_map.get(i, row['BF_IBNR_Real'])
     else:
         for i, row in enumerate(rows):
-            row['Cape_Cod_IBNR'] = row['Cape_Cod_IBNR_Real']
+            row['BF_IBNR'] = row['BF_IBNR_Real']
 
-    # 6. Discount nominal IBNR if required
+    # 5. Discount nominal IBNR if required
     if use_discounting:
-        # Reconstruct nominal completed triangle
-        completed_nominal = completed_real.copy()
-        for i in range(n_ap):
-            last_obs = -1
-            for j in range(n_dp - 1, -1, -1):
-                if i + j < n_ap and pd.notna(cum_triangle.iloc[i, j]):
-                    last_obs = j
-                    break
-            if last_obs >= 0 and i in nominal_map:
-                # Redistribute future nominal payments based on real proportions
-                pass # Simplified for brevity
         _, total_ibnr_disc = discount_completed_triangle(completed_real, working_cum, n_ap, period_unit, spot_rates, flat_rate)
     else:
         total_ibnr_disc = None
 
     return {
         'results_df': pd.DataFrame(rows),
-        'total_ibnr': total_ibnr,
+        'total_ibnr': sum(r['BF_IBNR'] for r in rows),
         'total_ibnr_discounted': total_ibnr_disc,
-        'cape_cod_lr': cape_cod_lr,
-        'all_ldfs': calculate_all_ldfs(cum_triangle, n_dp) # Display nominal LDFs
+        'all_ldfs': calculate_all_ldfs(cum_triangle, n_dp)
     }
