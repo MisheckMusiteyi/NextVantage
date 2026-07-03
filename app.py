@@ -533,34 +533,40 @@ def render_bcl_calculator():
             st.subheader("LDF Selection")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
             
-            sample_amt = amount_cols[0]
-            sample_cum = build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain_code, n_periods)[1]
-            all_ldfs = ibnr_bcl.calculate_all_ldfs(sample_cum, n_periods)
-            
-            ldf_df = pd.DataFrame({
-                "Dev Period": range(1, n_periods),
-                "Vol-Weighted": all_ldfs["volume_weighted"],
-                "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"],
-                "Medial": all_ldfs["medial"],
-                "Lin Reg (clamped)": all_ldfs["linear_regression"],
-                "Wtd Last 3": all_ldfs["weighted_last_3"]
-            })
-            st.dataframe(ldf_df, width='stretch')
+            # FIX: Import build_triangles from engine_utils
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                # Correctly use the imported build_triangles which returns (inc, cum, obs_mask)
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain_code, n_periods)
+                all_ldfs = ibnr_bcl.calculate_all_ldfs(sample_cum, n_periods)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n_periods),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
 
-            selected_method = st.selectbox(
-                "Select LDF Method",
-                ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
-                index=0,
-                key="bcl_ldf_method"
-            )
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="bcl_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities to display LDF selection.")
+                selected_method = "volume_weighted"
             
             all_results = []
             for lob in lobs:
                 lob_data = df[df[lob_col]==lob].copy()
                 for ac in amount_cols:
-                    # Build triangle for this LOB + Amount combination
-                    inc, cum, obs_mask = build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
+                    # Build triangle for this LOB + Amount combination using engine_utils
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
                     
                     result = ibnr_bcl.calculate_bcl_ibnr(
                         cum_triangle=cum,
@@ -681,27 +687,31 @@ def render_capecod_calculator():
             # LDF Selection UI
             st.subheader("LDF Selection")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
-            sample_amt = amount_cols[0]
-            sample_cum = build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)[1]
-            all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n)
-            
-            ldf_df = pd.DataFrame({
-                "Dev Period": range(1, n),
-                "Vol-Weighted": all_ldfs["volume_weighted"],
-                "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"],
-                "Medial": all_ldfs["medial"],
-                "Lin Reg (clamped)": all_ldfs["linear_regression"],
-                "Wtd Last 3": all_ldfs["weighted_last_3"]
-            })
-            st.dataframe(ldf_df, width='stretch')
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
+                all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
 
-            selected_method = st.selectbox(
-                "Select LDF Method",
-                ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
-                index=0,
-                key="cc_ldf_method"
-            )
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="cc_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities.")
+                selected_method = "volume_weighted"
             
             all_results = []
             for lob in lobs:
@@ -717,7 +727,7 @@ def render_capecod_calculator():
                     elif len(prems) > n: prems = prems[:n]
 
                 for ac in amount_cols:
-                    inc, cum, obs_mask = build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
                     
                     result = ibnr_cc.calculate_cape_cod_ibnr(
                         cum_triangle=cum,
@@ -845,27 +855,31 @@ def render_bf_calculator():
             # LDF Selection UI
             st.subheader("LDF Selection")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
-            sample_amt = amount_cols[0]
-            sample_cum = build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)[1]
-            all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n)
-            
-            ldf_df = pd.DataFrame({
-                "Dev Period": range(1, n),
-                "Vol-Weighted": all_ldfs["volume_weighted"],
-                "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"],
-                "Medial": all_ldfs["medial"],
-                "Lin Reg (clamped)": all_ldfs["linear_regression"],
-                "Wtd Last 3": all_ldfs["weighted_last_3"]
-            })
-            st.dataframe(ldf_df, width='stretch')
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
+                all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
 
-            selected_method = st.selectbox(
-                "Select LDF Method",
-                ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
-                index=0,
-                key="bf_ldf_method"
-            )
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="bf_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities.")
+                selected_method = "volume_weighted"
             
             all_results = []
             for lob in lobs:
@@ -884,7 +898,7 @@ def render_bf_calculator():
                     prems = [1] * n # Placeholder if no premium file provided
 
                 for ac in amount_cols:
-                    inc, cum, obs_mask = build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
                     
                     result = ibnr_bf.calculate_bf_ibnr(
                         cum_triangle=cum,
