@@ -15,100 +15,89 @@ import re
 from scipy import interpolate
 
 # =============================================================================
-#  BULLETPROOF PATH & IMPORT SYSTEM (Handles spaces AND underscores)
+#  ROBUST PATH & IMPORT SYSTEM (Eliminates SyntaxError with folder spaces)
 # =============================================================================
 import sys
 import os
-import importlib
+import importlib.util
 
 # Get the absolute path where app.py is running
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Add all possible folder variations to Python's search path
+# Add the base directory to Python's path
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-# List of folder names in your project (try both space and underscore versions)
-folder_variations = [
-    ("Full_Valuation", "Full Valuation"),
-    ("LRC_Calculators", "LRC Calculators"),
-    ("LIC_Calculators", "LIC Calculators"),
-    ("FCF_Calculators", "FCF Calculators"),
-    ("OCR_Calculators", "OCR Calculators"),
-    ("IBNR_Calculators", "IBNR Calculators"),
-    ("ULAE_Calculators", "ULAE Calculators"),
-    ("NPR_Calculators", "NPR Calculators"),
-    ("RA_Calculators", "RA Calculators"),
-    ("utils", "utils")
-]
-
-# Add every possible path variation to sys.path
-for var_tuple in folder_variations:
-    for var in var_tuple:
-        test_path = os.path.join(BASE_DIR, var)
-        if test_path not in sys.path and os.path.exists(test_path):
-            sys.path.insert(0, test_path)
+def import_file_abs(relative_path):
+    """
+    Imports a python module by its exact absolute file path.
+    This 100% bypasses the 'space in folder name' SyntaxError.
+    """
+    abs_path = os.path.join(BASE_DIR, relative_path.replace('/', os.sep))
+    
+    if not os.path.exists(abs_path):
+        return None
         
-        # Also add deep subfolders
-        if var in ["LIC_Calculators", "LIC Calculators"]:
-            for sub_var in ["FCF_Calculators", "FCF Calculators"]:
-                deep_path = os.path.join(BASE_DIR, var, sub_var)
-                if deep_path not in sys.path and os.path.exists(deep_path):
-                    sys.path.insert(0, deep_path)
-            
-            # OCR, IBNR, ULAE, NPR
-            for deep_calc in ["OCR_Calculators", "OCR Calculators", "IBNR_Calculators", "IBNR Calculators", 
-                              "ULAE_Calculators", "ULAE Calculators", "NPR_Calculators", "NPR Calculators"]:
-                deep_path = os.path.join(BASE_DIR, var, "FCF_Calculators", deep_calc)
-                if deep_path not in sys.path and os.path.exists(deep_path):
-                    sys.path.insert(0, deep_path)
-            
-            # RA
-            ra_path = os.path.join(BASE_DIR, var, "RA_Calculators")
-            if ra_path not in sys.path and os.path.exists(ra_path):
-                sys.path.insert(0, ra_path)
-            ra_path_space = os.path.join(BASE_DIR, var, "RA Calculators")
-            if ra_path_space not in sys.path and os.path.exists(ra_path_space):
-                sys.path.insert(0, ra_path_space)
-
-# Function to safely import modules
-def safe_import(standard_name, space_name):
+    module_name = os.path.splitext(os.path.basename(relative_path))[0]
+    spec = importlib.util.spec_from_file_location(module_name, abs_path)
+    
+    if spec is None:
+        return None
+        
+    module = importlib.util.module_from_spec(spec)
     try:
-        # Try the standard underscore version first
-        return importlib.import_module(standard_name)
-    except ModuleNotFoundError:
-        try:
-            # Fallback to space version
-            return importlib.import_module(space_name)
-        except ModuleNotFoundError:
-            return None
+        spec.loader.exec_module(module)
+        return module
+    except Exception:
+        return None
 
-# --- LRC CALCULATORS ---
-upr_engine = safe_import("LRC_Calculators.upr_engine", "LRC Calculators.upr_engine")
-loss_comp_engine = safe_import("LRC_Calculators.loss_component_engine", "LRC Calculators.loss_component_engine")
+# --- Load LRC Modules ---
+upr_engine = import_file_abs("LRC_Calculators/upr_engine.py")
+loss_comp_engine = import_file_abs("LRC_Calculators/loss_component_engine.py")
 
-# --- LIC CALCULATORS ---
-ocr_engine = safe_import("LIC_Calculators.FCF_Calculators.OCR_Calculators.ocr_engine", "LIC Calculators.FCF Calculators.OCR Calculators.ocr_engine")
+# --- Load LIC FCF Modules ---
+ocr_engine = import_file_abs("LIC_Calculators/FCF_Calculators/OCR_Calculators/ocr_engine.py")
 
-ibnr_pct = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.percentage_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.percentage_ibnr")
-ibnr_bcl = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.bcl_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.bcl_ibnr")
-ibnr_cc = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.cape_cod_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.cape_cod_ibnr")
-ibnr_bf = safe_import("LIC_Calculators.FCF_Calculators.IBNR_Calculators.bf_ibnr", "LIC Calculators.FCF Calculators.IBNR Calculators.bf_ibnr")
+ibnr_pct = import_file_abs("LIC_Calculators/FCF_Calculators/IBNR_Calculators/percentage_ibnr.py")
+ibnr_bcl = import_file_abs("LIC_Calculators/FCF_Calculators/IBNR_Calculators/bcl_ibnr.py")
+ibnr_cc = import_file_abs("LIC_Calculators/FCF_Calculators/IBNR_Calculators/cape_cod_ibnr.py")
+ibnr_bf = import_file_abs("LIC_Calculators/FCF_Calculators/IBNR_Calculators/bf_ibnr.py")
 
-ulae_engine = safe_import("LIC_Calculators.FCF_Calculators.ULAE_Calculators.ulae_engine", "LIC Calculators.FCF Calculators.ULAE Calculators.ulae_engine")
-npr_engine = safe_import("LIC_Calculators.FCF_Calculators.NPR_Calculators.npr_engine", "LIC Calculators.FCF Calculators.NPR Calculators.npr_engine")
+ulae_engine = import_file_abs("LIC_Calculators/FCF_Calculators/ULAE_Calculators/ulae_engine.py")
+npr_engine = import_file_abs("LIC_Calculators/FCF_Calculators/NPR_Calculators/npr_engine.py")
 
-# --- RA CALCULATORS ---
-mack_engine = safe_import("LIC_Calculators.RA_Calculators.mack_ra", "LIC Calculators.RA Calculators.mack_ra")
-bootstrap_engine = safe_import("LIC_Calculators.RA_Calculators.bootstrap_ra", "LIC Calculators.RA Calculators.bootstrap_ra")
+# --- Load LIC RA Modules ---
+mack_engine = import_file_abs("LIC_Calculators/RA_Calculators/mack_ra.py")
+bootstrap_engine = import_file_abs("LIC_Calculators/RA_Calculators/bootstrap_ra.py")
 
-# --- SHARED HELPERS ---
-act_helpers = safe_import("utils.actuarial_helpers", "utils.actuarial_helpers")
-# Import the new engine utils for UI display if needed
-engine_utils = safe_import("utils.actuarial_engine_utils", "utils.actuarial_engine_utils")
+# --- Load Shared Helpers ---
+act_helpers = import_file_abs("utils/actuarial_helpers.py")
+engine_utils = import_file_abs("utils/actuarial_engine_utils.py")
 
-# --- FULL VALUATION ---
-full_engine = safe_import("Full_Valuation.full_LRC_IFRS17", "Full Valuation.full_LRC_IFRS17")
+# --- Load Full Valuation ---
+full_engine = import_file_abs("Full_Valuation/full_LRC_IFRS17.py")
+
+
+# =============================================================================
+#  CRITICAL STARTUP CHECKS
+# =============================================================================
+
+# If core modules failed to load, stop the app immediately with a clear message.
+if upr_engine is None:
+    st.error(f"❌ Critical Error: Could not find `upr_engine.py`.")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LRC_Calculators')}`")
+    st.write("Please check that a file named `upr_engine.py` exists in that folder.")
+    st.stop()
+
+if ocr_engine is None:
+    st.error(f"❌ Critical Error: Could not find `ocr_engine.py`.")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LIC_Calculators/FCF_Calculators/OCR_Calculators')}`")
+    st.stop()
+
+if full_engine is None:
+    st.error(f"❌ Critical Error: Could not find `full_LRC_IFRS17.py`.")
+    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'Full_Valuation')}`")
+    st.stop()
 
 
 # =============================================================================
@@ -533,10 +522,8 @@ def render_bcl_calculator():
             st.subheader("LDF Selection")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
             
-            # FIX: Import build_triangles from engine_utils
             if engine_utils is not None:
                 sample_amt = amount_cols[0]
-                # Correctly use the imported build_triangles which returns (inc, cum, obs_mask)
                 _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain_code, n_periods)
                 all_ldfs = ibnr_bcl.calculate_all_ldfs(sample_cum, n_periods)
                 
@@ -578,7 +565,6 @@ def render_bcl_calculator():
             for lob in lobs:
                 lob_data = df[df[lob_col]==lob].copy()
                 for ac in amount_cols:
-                    # Build triangle for this LOB + Amount combination using engine_utils
                     _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
                     
                     result = ibnr_bcl.calculate_bcl_ibnr(
@@ -593,7 +579,6 @@ def render_bcl_calculator():
                         spot_rates=spot_rates,
                         flat_rate=flat_rate
                     )
-                    # Tag results for grouping
                     res_df = result['results_df']
                     res_df['LOB'] = lob
                     res_df['Amount_Col'] = ac
