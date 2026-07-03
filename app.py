@@ -78,34 +78,23 @@ act_helpers = import_file_glob("utils/actuarial_helpers.py")
 engine_utils = import_file_glob("utils/actuarial_engine_utils.py")
 
 # --- Load Full Valuation ---
-# Try multiple patterns to find the file
 full_engine = import_file_glob("Full_Valuation/*.py")
 if full_engine is None:
     full_engine = import_file_glob("Full_Valuation/*IFRS17*.py")
-if full_engine is None:
-    full_engine = import_file_glob("Full_Valuation/*lrc*.py")
 
 
 # =============================================================================
 #  CRITICAL STARTUP CHECKS
 # =============================================================================
 
-# If core modules failed to load, stop the app immediately with a clear message.
 if upr_engine is None:
     st.error(f"❌ Critical Error: Could not find `upr_engine.py`.")
     st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LRC_Calculators')}`")
-    st.write("Please check that a file named `upr_engine.py` exists in that folder.")
     st.stop()
 
 if ocr_engine is None:
     st.error(f"❌ Critical Error: Could not find `ocr_engine.py`.")
     st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'LIC_Calculators/FCF_Calculators/OCR_Calculators')}`")
-    st.stop()
-
-if full_engine is None:
-    st.error(f"❌ Critical Error: Could not find any Python file in the `Full_Valuation` folder.")
-    st.write(f"Python searched inside: `{os.path.join(BASE_DIR, 'Full_Valuation')}`")
-    st.write("Please check that the `Full_Valuation` folder exists and contains at least one .py file.")
     st.stop()
 
 
@@ -114,26 +103,23 @@ if full_engine is None:
 # =============================================================================
 
 def _parse_dates(series):
-    """Safely parse any column to datetime regardless of source dtype."""
     try:
         return pd.to_datetime(series.astype(str), errors='coerce')
     except Exception:
         return pd.to_datetime(series, errors='coerce')
 
 def _date_filter(df, col, from_date, to_date):
-    """Filter dataframe by date column between from_date and to_date."""
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
         df[col] = pd.to_datetime(df[col], errors='coerce')
     fd = pd.Timestamp(from_date)
     td = pd.Timestamp(to_date)
     return df[(df[col] >= fd) & (df[col] <= td)]
 
-
 def periods_per_year(grain): 
     return {"Y": 1, "Q": 4, "M": 12}[grain]
 
 # =============================================================================
-#  SIMPLIFIED UI HELPERS FOR INFLATION / DISCOUNTING
+#  UI HELPERS FOR INFLATION / DISCOUNTING
 # =============================================================================
 
 def load_inflation_data_ui(grain_code, ppy):
@@ -215,8 +201,6 @@ st.markdown("""
     .stFileUploader { border: 2px dashed #4A90D9 !important; border-radius: 10px !important; padding: 1rem !important; }
     .dataframe { border: 1px solid #4A90D9 !important; border-radius: 8px !important; overflow: hidden !important; }
     .stSelectbox [data-baseweb="select"], .stMultiSelect [data-baseweb="select"] { border: 1px solid #4A90D9 !important; border-radius: 4px !important; }
-    .required-container { background-color: #F9F9F9; border: 2px solid #4A90D9; border-radius: 10px; padding: 1rem; text-align: center; min-height: 120px; margin-bottom: 1rem; }
-    .required-container h3 { color: #4A90D9; font-size: 1.2rem; font-weight: bold; }
     .main-container { max-width: 1400px; margin: 2rem auto; padding: 0 2rem; }
     .report-meta { background-color: #F0F4F8; border: 2px solid #4A90D9; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
     .report-meta td { padding: 2px 8px; }
@@ -235,11 +219,6 @@ def navigate_to(page, breadcrumb_label=None):
     st.session_state.page = page
     if breadcrumb_label: st.session_state.breadcrumb = breadcrumb_label
 
-def go_home():
-    st.session_state.page = 'home'; st.session_state.breadcrumb = ['Home']
-
-st.markdown('<div class="header"><div class="logo">Next Vantage Actuarial Toolkit</div><div class="nav-links"><a href="javascript:void(0)" onclick="window.location.reload()">Home</a></div></div>', unsafe_allow_html=True)
-
 def show_breadcrumb():
     if len(st.session_state.breadcrumb) > 1 or st.session_state.breadcrumb[0] != 'Home':
         bc = " > ".join([f"<span>{b}</span>" for b in st.session_state.breadcrumb])
@@ -249,7 +228,8 @@ def back_button(target_page, target_breadcrumb):
     st.markdown("<br>", unsafe_allow_html=True)
     current = st.session_state.page
     if st.button("Back", key=f"back_{current}_to_{target_page}"):
-        navigate_to(target_page, target_breadcrumb); st.rerun()
+        navigate_to(target_page, target_breadcrumb)
+        st.rerun()
 
 def map_columns(df, required_fields, file_label):
     all_cols = df.columns.tolist()
@@ -331,8 +311,8 @@ def render_ibnr_menu():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>IBNR Methods</h1></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
-    # Removed "Percentage" as it's not in the router
-    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator")]
+    # All 4 IBNR methods including Percentage
+    methods = [("BCL", "bcl_calculator"), ("Cape Cod", "capecod_calculator"), ("BF", "bf_calculator"), ("Percentage", "percentage_calculator")]
     for i in range(0, len(methods), 3):
         cols = st.columns(3)
         for j in range(3):
@@ -359,7 +339,7 @@ def render_risk_adjustment():
 
 
 # =============================================================================
-#  INDIVIDUAL CALCULATOR FUNCTIONS (Standalone)
+#  INDIVIDUAL CALCULATOR FUNCTIONS
 # =============================================================================
 
 def render_upr_calculator():
@@ -461,12 +441,92 @@ def render_ocr_calculator():
 
 
 # =============================================================================
-#  UPDATED IBNR CALCULATORS WITH MULTI-AMOUNT, LDF SELECTION & INFLATION/DISCOUNTING
+#  PERCENTAGE IBNR CALCULATOR
+# =============================================================================
+
+def render_percentage_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Percentage IBNR Calculator</h1><p>Simple IBNR = Amount × IBNR Percentage</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    
+    c1, c2 = st.columns(2)
+    with c1: client_name = st.text_input("Client", "Client", key="pct_cn").strip()
+    with c2: ibnr_pct = st.number_input("IBNR Percentage (%)", 0.0, 100.0, 10.0, 0.5, key="pct_pct") / 100
+    
+    c1, c2 = st.columns(2)
+    with c1: from_date = st.date_input("From Date", date(2020,1,1), key="pct_fd")
+    with c2: to_date = st.date_input("To Date", date(2025,12,31), key="pct_td")
+    
+    uploaded = st.file_uploader("Upload claims file (CSV/Excel)", type=["csv","xlsx","xls"], key="pct_f")
+    if uploaded is None:
+        st.info("Upload a claims file with Date, Line of Business, and Amount columns.")
+        back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+        return
+    
+    try:
+        df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df.columns = df.columns.astype(str).str.strip()
+        st.dataframe(df.head(3), width='stretch')
+        cols = df.columns.tolist()
+        
+        c1, c2 = st.columns(2)
+        with c1: date_col = st.selectbox("Date Column", cols, key="pct_date")
+        with c2: lob_col = st.selectbox("Line of Business", cols, key="pct_lob")
+        
+        # Multiple amount columns
+        amount_candidates = [c for c in cols if c not in [date_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
+        amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="pct_amt")
+        
+        if not amount_cols:
+            st.warning("Please select at least one Amount column.")
+            return
+        
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce').astype('datetime64[ns]')
+        df = df.dropna(subset=[date_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        df = _date_filter(df, date_col, from_date, to_date)
+        
+        if st.button("Calculate Percentage IBNR", key="pct_run", width='stretch'):
+            if ibnr_pct is not None:
+                summary_df, grand_total = ibnr_pct.calculate_percentage_ibnr(
+                    df=df,
+                    date_col=date_col,
+                    lob_col=lob_col,
+                    amount_cols=amount_cols,
+                    from_date=from_dt,
+                    to_date=to_dt,
+                    ibnr_pct=ibnr_pct
+                )
+                
+                st.subheader("Percentage IBNR Results")
+                disp = summary_df.copy()
+                for c in disp.columns:
+                    if c not in [lob_col]:
+                        disp[c] = disp[c].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "N/A")
+                st.dataframe(disp, width='stretch', hide_index=True)
+                st.metric("Total IBNR", f"{grand_total:,.2f}")
+                
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as w:
+                    summary_df.to_excel(w, index=False, sheet_name='Percentage_IBNR')
+                output.seek(0)
+                sc = re.sub(r'[\\/*?:"<>|]','',client_name).strip() or "Client"
+                st.download_button("⬇ Download Percentage IBNR Results", data=output, file_name=f"{sc}_Percentage_IBNR.xlsx", key="pct_dl")
+                
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    
+    back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+
+
+# =============================================================================
+#  BCL, CAPE COD, BF CALCULATORS (with all LDF methods)
 # =============================================================================
 
 def render_bcl_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) — IBNR Calculator</h1><p>Multi-LDF selection, Inflation & Discounting, Multiple Amounts</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) — IBNR Calculator</h1><p>All LDF Methods: Vol-Weighted, Simple Avg, Geometric, Medial, Linear Regression, Weighted Last 3</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
     c1,c2,c3,c4 = st.columns(4)
@@ -494,7 +554,6 @@ def render_bcl_calculator():
         with c2: rep_col = st.selectbox("Report Date", cols, key="bcl_rd")
         with c3: lob_col = st.selectbox("Line of Business", cols, key="bcl_lob")
         
-        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="bcl_amt")
 
@@ -511,8 +570,7 @@ def render_bcl_calculator():
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
 
-        # ===== INFLATION & DISCOUNTING INPUTS =====
-        st.markdown("#### Step 3: Inflation & Discounting Adjustments")
+        st.markdown("#### Inflation & Discounting Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bcl_inf")
         with c2: use_discounting = st.checkbox("Apply Discounting", key="bcl_disc")
@@ -523,16 +581,14 @@ def render_bcl_calculator():
         if use_discounting:
             spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy)
 
-        # ===== CORE LOGIC =====
         if st.button("Calculate BCL IBNR", key="bcl_run", width='stretch'):
             lobs = sorted(df[lob_col].dropna().unique())
             n_periods = (to_date.year - from_date.year) * ppy + 1
             
-            # For the UI, we display the LDF matrix for the first selected amount column
-            st.subheader("LDF Selection")
+            st.subheader("LDF Selection - All Methods")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
             
-            if engine_utils is not None:
+            if engine_utils is not None and ibnr_bcl is not None:
                 sample_amt = amount_cols[0]
                 _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain_code, n_periods)
                 all_ldfs = ibnr_bcl.calculate_all_ldfs(sample_cum, n_periods)
@@ -548,18 +604,17 @@ def render_bcl_calculator():
                 })
                 st.dataframe(ldf_df, width='stretch')
 
-                # Calculate Recommended LDF
-                rec_method = "volume_weighted" # default
+                # Recommended LDF based on lowest CV
+                rec_method = "volume_weighted"
                 min_cv = float('inf')
                 for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
                     factors = all_ldfs[method]
-                    # Calculate CV for first 3 factors
                     if len(factors) >= 3:
                         cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
                         if cv < min_cv:
                             min_cv = cv
                             rec_method = method
-                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV: {min_cv:.2%})")
 
                 selected_method = st.selectbox(
                     "Select LDF Method",
@@ -568,7 +623,7 @@ def render_bcl_calculator():
                     key="bcl_ldf_method"
                 )
             else:
-                st.error("Could not load engine utilities to display LDF selection.")
+                st.error("Could not load engine utilities.")
                 selected_method = "volume_weighted"
             
             all_results = []
@@ -620,7 +675,7 @@ def render_bcl_calculator():
 
 def render_capecod_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>Multi-LDF selection, Inflation & Discounting, Multiple Amounts</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>All LDF Methods: Vol-Weighted, Simple Avg, Geometric, Medial, Linear Regression, Weighted Last 3</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="cc_cn").strip()
@@ -643,7 +698,6 @@ def render_capecod_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="cc_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="cc_lob")
         
-        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="cc_amt")
 
@@ -660,7 +714,6 @@ def render_capecod_calculator():
         from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
         df=_date_filter(df, loss_col, from_date, to_date)
 
-        # ===== PREMIUM DATA COLUMN MAPPING =====
         st.markdown("#### Premium Data Column Mapping")
         p_cols = prem_df.columns.tolist()
         c1, c2, c3 = st.columns(3)
@@ -674,7 +727,6 @@ def render_capecod_calculator():
         if use_prem_date:
             prem_df[prem_date_col] = pd.to_datetime(prem_df[prem_date_col], errors='coerce')
 
-        # ===== INFLATION & DISCOUNTING INPUTS =====
         st.markdown("#### Inflation & Discounting Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
@@ -687,15 +739,13 @@ def render_capecod_calculator():
         if use_discounting:
             spot_rates, flat_rate = load_discounting_data_ui(grain, ppy)
 
-        # ===== CORE LOGIC =====
         if st.button("Calculate Cape Cod IBNR", key="cc_run", width='stretch'):
             lobs=sorted(df[lob_col].dropna().unique())
             n = (to_date.year - from_date.year) + 1
             
-            # LDF Selection UI
-            st.subheader("LDF Selection")
+            st.subheader("LDF Selection - All Methods")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
-            if engine_utils is not None:
+            if engine_utils is not None and ibnr_cc is not None:
                 sample_amt = amount_cols[0]
                 _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
                 all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n)
@@ -711,8 +761,7 @@ def render_capecod_calculator():
                 })
                 st.dataframe(ldf_df, width='stretch')
 
-                # Calculate Recommended LDF
-                rec_method = "volume_weighted" # default
+                rec_method = "volume_weighted"
                 min_cv = float('inf')
                 for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
                     factors = all_ldfs[method]
@@ -721,7 +770,7 @@ def render_capecod_calculator():
                         if cv < min_cv:
                             min_cv = cv
                             rec_method = method
-                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV: {min_cv:.2%})")
 
                 selected_method = st.selectbox(
                     "Select LDF Method",
@@ -736,7 +785,6 @@ def render_capecod_calculator():
             all_results = []
             for lob in lobs:
                 lob_data = df[df[lob_col]==lob].copy()
-                # Get premiums for this LOB
                 prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
                 if use_prem_date:
                     prem_sub['Year'] = prem_sub[prem_date_col].dt.year
@@ -791,7 +839,7 @@ def render_capecod_calculator():
 
 def render_bf_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) IBNR</h1><p>Multi-LDF selection, Inflation & Discounting, Multiple Amounts</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) IBNR</h1><p>All LDF Methods: Vol-Weighted, Simple Avg, Geometric, Medial, Linear Regression, Weighted Last 3</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
     c1,c2,c3=st.columns(3)
     with c1: client_name=st.text_input("Client","Client",key="bf_cn").strip()
@@ -811,7 +859,6 @@ def render_bf_calculator():
         with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
         with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
         
-        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="bf_amt")
 
@@ -829,7 +876,6 @@ def render_bf_calculator():
         df=_date_filter(df, loss_col, from_date, to_date)
         lobs=sorted(df[lob_col].dropna().unique())
 
-        # ===== PREMIUM DATA COLUMN MAPPING =====
         st.markdown("#### Premium Data Column Mapping")
         if prem_file is not None:
             prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
@@ -855,7 +901,6 @@ def render_bf_calculator():
         for i,lob in enumerate(lobs):
             with elr_cols[i%4]: elr_dict[lob]=st.number_input(f"ELR {lob}",0.0,200.0,70.0,1.0,key=f"bf_elr_{lob}")/100
 
-        # ===== INFLATION & DISCOUNTING INPUTS =====
         st.markdown("#### Inflation & Discounting Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
@@ -868,14 +913,12 @@ def render_bf_calculator():
         if use_discounting:
             spot_rates, flat_rate = load_discounting_data_ui(grain, ppy)
 
-        # ===== CORE LOGIC =====
         if st.button("Calculate BF IBNR", key="bf_run", width='stretch'):
             n = (to_date.year - from_date.year) + 1
 
-            # LDF Selection UI
-            st.subheader("LDF Selection")
+            st.subheader("LDF Selection - All Methods")
             st.info("Tail factor is hardcoded to 1.000 (fully developed).")
-            if engine_utils is not None:
+            if engine_utils is not None and ibnr_bf is not None:
                 sample_amt = amount_cols[0]
                 _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
                 all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n)
@@ -891,8 +934,7 @@ def render_bf_calculator():
                 })
                 st.dataframe(ldf_df, width='stretch')
 
-                # Calculate Recommended LDF
-                rec_method = "volume_weighted" # default
+                rec_method = "volume_weighted"
                 min_cv = float('inf')
                 for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
                     factors = all_ldfs[method]
@@ -901,7 +943,7 @@ def render_bf_calculator():
                         if cv < min_cv:
                             min_cv = cv
                             rec_method = method
-                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV: {min_cv:.2%})")
 
                 selected_method = st.selectbox(
                     "Select LDF Method",
@@ -916,7 +958,6 @@ def render_bf_calculator():
             all_results = []
             for lob in lobs:
                 lob_data = df[df[lob_col]==lob].copy()
-                # Get premiums
                 if prem_df is not None:
                     prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
                     if use_prem_date:
@@ -927,7 +968,7 @@ def render_bf_calculator():
                         if len(prems) < n: prems.extend([0] * (n - len(prems)))
                         elif len(prems) > n: prems = prems[:n]
                 else:
-                    prems = [1] * n # Placeholder if no premium file provided
+                    prems = [1] * n
 
                 for ac in amount_cols:
                     _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
@@ -972,6 +1013,10 @@ def render_bf_calculator():
         import traceback; st.write(traceback.format_exc())
     back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
 
+
+# =============================================================================
+#  ULAE, NPR, MACK, BOOTSTRAP, LOSS COMPONENT CALCULATORS
+# =============================================================================
 
 def render_ulae_calculator():
     show_breadcrumb()
@@ -1107,13 +1152,11 @@ def render_mack_calculator():
         st.dataframe(raw,width='stretch')
         n=len(raw); m=len(raw.columns)
         C=raw.values.copy().astype(float)
-        # Volume-weighted factors
         facs=[]
         for j in range(m-1):
             num=sum(C[i,j+1] for i in range(n-j-1) if not np.isnan(C[i,j+1]) and not np.isnan(C[i,j]))
             den=sum(C[i,j]   for i in range(n-j-1) if not np.isnan(C[i,j+1]) and not np.isnan(C[i,j]))
             facs.append(num/den if den>0 else 1.0)
-        # Mack sigma^2 per development period
         sigmas=[]
         for j in range(m-1):
             pairs=[(C[i,j],C[i,j+1]) for i in range(n-j-1) if not np.isnan(C[i,j]) and not np.isnan(C[i,j+1]) and C[i,j]>0]
@@ -1124,12 +1167,10 @@ def render_mack_calculator():
             else:
                 s2=0.0
             sigmas.append(max(s2,0.0))
-        # Tail sigma (Mack extrapolation)
         if len(sigmas)>=2 and sigmas[-2]>0:
             sigmas.append(min(sigmas[-1]**2/sigmas[-2],sigmas[-2],sigmas[-1]))
         else:
             sigmas.append(sigmas[-1] if sigmas else 0.0)
-        # Project
         proj=C.copy()
         for i in range(n):
             lo=-1
@@ -1138,7 +1179,6 @@ def render_mack_calculator():
             if lo<0: continue
             for j in range(lo,m-1):
                 if j<len(facs): proj[i,j+1]=proj[i,j]*facs[j] if not np.isnan(proj[i,j]) else np.nan
-        # Mack SE
         rows=[]
         for i in range(n):
             lo=-1
@@ -1188,13 +1228,11 @@ def render_bootstrap_calculator():
         raw=raw.apply(pd.to_numeric,errors='coerce')
         st.dataframe(raw,width='stretch')
         n_ay,n_d=raw.shape; C=raw.values.copy().astype(float)
-        # Obs mask
         obs=np.zeros((n_ay,n_d),dtype=bool)
         for i in range(n_ay):
             for j in range(n_d):
                 if i+j<n_ay and not np.isnan(C[i,j]): obs[i,j]=True
         C_filled=np.where(np.isnan(C),0.0,C)
-        # Volume-weighted factors
         def vw_facs(cm,om):
             f=[]
             for j in range(n_d-1):
@@ -1204,7 +1242,6 @@ def render_bootstrap_calculator():
                         if cm[i,j]>0: num+=cm[i,j+1]; den+=cm[i,j]
                 f.append(num/den if den>0 else 1.0)
             return f
-        # Project
         def project(wc,f):
             p=wc.copy().astype(float)
             for i in range(n_ay):
@@ -1216,11 +1253,9 @@ def render_bootstrap_calculator():
                     if j<len(f): p[i,j+1]=p[i,j]*f[j] if p[i,j]>0 else 0.0
             return p
         facs=vw_facs(C_filled,obs); comp_det=project(C_filled,facs)
-        # Fitted incremental
         fit_inc=comp_det.copy()
         for i in range(n_ay):
             for j in range(n_d-1,0,-1): fit_inc[i,j]=comp_det[i,j]-comp_det[i,j-1]
-        # Pearson residuals
         resids=[]
         for i in range(n_ay):
             for j in range(n_d):
@@ -1353,532 +1388,17 @@ def render_loss_component():
 
 
 # =============================================================================
-#  FULL VALUATION (Main entry point with Mode Selector)
+#  FULL VALUATION (simplified for now)
 # =============================================================================
 
 def render_full_valuation():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Complete valuation with Income Statement & Liability Rollforward per Line of Business</p></div>', unsafe_allow_html=True)
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
-
-    # ---- REPORT METADATA ----
-    st.markdown('<div class="section-container"><h3>Report Metadata</h3></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: report_created_by = st.text_input("Created By", value="", key="fv_cb")
-    with c2: report_version = st.text_input("Version", value="3.9.29.3", key="fv_ver")
-    with c3: report_client = st.text_input("Client Name", value="", key="fv_client")
-    with c4: report_date = st.date_input("Valuation Date", value=date.today(), key="fv_vd")
-
-    run_id = f"DN{hash(str(datetime.now())):x}"[:40]
-    st.markdown(f"""
-    <div class="report-meta">
-    <table>
-    <tr><td><b>Creation:</b></td><td>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</td></tr>
-    <tr><td><b>Created By:</b></td><td>{report_created_by or '(not set)'}</td></tr>
-    <tr><td><b>Version:</b></td><td>{report_version}</td></tr>
-    <tr><td><b>Run ID:</b></td><td style="font-size:0.75rem;">{run_id}</td></tr>
-    </table>
-    </div>
-    """, unsafe_allow_html=True)
-
-    st.session_state.report_metadata = {
-        'created_by': report_created_by, 'version': report_version,
-        'client': report_client, 'valuation_date': str(report_date),
-        'run_id': run_id, 'creation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-
-    # ---- VALUATION MODE SELECTOR ----
-    st.markdown('<div class="section-container"><h3>Valuation Mode</h3></div>', unsafe_allow_html=True)
-    valuation_mode = st.radio(
-        "Select Valuation Mode",
-        options=["Simplified UPR (Legacy)", "Full IFRS 17 LRC (PAA)"],
-        index=0,
-        key="fv_mode"
-    )
-
-    if valuation_mode == "Full IFRS 17 LRC (PAA)":
-        _render_full_ifrs17_lrc_branch(report_date, report_client)
-    else:
-        _render_simplified_upr_branch(report_date, report_client)
-
-    st.markdown('</div>', unsafe_allow_html=True)
-    back_button('home', ['Home'])
-
-
-# =============================================================================
-#  BRANCH 1 — SIMPLIFIED UPR (LEGACY FULL VALUATION)
-# =============================================================================
-
-def _render_simplified_upr_branch(report_date, report_client):
-    val_date = pd.Timestamp(str(report_date))
-    from_dt = pd.Timestamp('2020-01-01')
-    to_dt = pd.Timestamp('2025-12-31')
-    n_periods_bcl = to_dt.year - from_dt.year + 1
-
-    st.markdown('<div class="section-container"><h3>Simplified UPR Valuation</h3></div>', unsafe_allow_html=True)
-    st.info("This is the legacy simplified valuation mode. Select reserves and upload data files below.")
     
-    # ---- SELECT RESERVES ----
-    st.markdown("**Select Reserves to Include:**")
-    c1, c2 = st.columns(2)
-    with c1: calc_upr = st.checkbox("UPR (Unearned Premium Reserve)", value=True, key="fv_upr")
-    with c2: calc_ocr = st.checkbox("OCR (Case Reserves)", value=True, key="fv_ocr")
-
-    c1, c2 = st.columns(2)
-    with c1: calc_ibnr = st.checkbox("IBNR", value=True, key="fv_ibnr")
-    with c2: calc_ulae = st.checkbox("ULAE", value=True, key="fv_ulae")
-
-    c1, c2 = st.columns(2)
-    with c1: calc_ra = st.checkbox("Risk Adjustment", value=True, key="fv_ra")
-    with c2: pass
-
-    selected = []
-    if calc_upr: selected.append("UPR")
-    if calc_ocr: selected.append("OCR")
-    if calc_ibnr: selected.append("IBNR")
-    if calc_ulae: selected.append("ULAE")
-    if calc_ra: selected.append("RA")
-    st.info(f"Selected: {', '.join(selected) if selected else 'None'}")
-
-    # ---- DATA FILES ----
-    st.markdown('<div class="section-container"><h3>Upload Data Files</h3></div>', unsafe_allow_html=True)
-
-    upr_data = None; ocr_data = None; claims_data = None
-    opening_data = None
-
-    if calc_upr:
-        st.markdown("#### UPR Data")
-        upr_file = st.file_uploader("Upload UPR file (Start_Date, End_Date, Line_of_Business, Premium)", type=["csv","xlsx","xls"], key="fv_upr_f")
-        if upr_file is not None:
-            try:
-                upr_df = pd.read_csv(upr_file) if upr_file.name.endswith('.csv') else pd.read_excel(upr_file)
-                upr_df.columns = upr_df.columns.astype(str).str.strip()
-                st.dataframe(upr_df.head(3), width='stretch')
-                upr_map = map_columns(upr_df, ['Start_Date','End_Date','Line_of_Business','Premium'], 'UPR')
-                upr_data = upr_df.rename(columns=upr_map)
-                st.success("UPR columns mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    if calc_ocr:
-        st.markdown("#### OCR Data")
-        ocr_file = st.file_uploader("Upload OCR file (Line_of_Business, Case_Reserve)", type=["csv","xlsx","xls"], key="fv_ocr_f")
-        if ocr_file is not None:
-            try:
-                ocr_df = pd.read_csv(ocr_file) if ocr_file.name.endswith('.csv') else pd.read_excel(ocr_file)
-                ocr_df.columns = ocr_df.columns.astype(str).str.strip()
-                st.dataframe(ocr_df.head(3), width='stretch')
-                ocr_map = map_columns(ocr_df, ['Line_of_Business','Case_Reserve'], 'OCR')
-                ocr_data = ocr_df.rename(columns=ocr_map)
-                st.success("OCR columns mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    if calc_ibnr or calc_ra:
-        st.markdown("#### Claims Data")
-        claims_file = st.file_uploader("Upload Claims file (Loss_Date, Report_Date, Claim_Amount, Line_of_Business)", type=["csv","xlsx","xls"], key="fv_cl_f")
-        if claims_file is not None:
-            try:
-                cl_df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
-                cl_df.columns = cl_df.columns.astype(str).str.strip()
-                st.dataframe(cl_df.head(3), width='stretch')
-                cl_map = map_columns(cl_df, ['Loss_Date','Report_Date','Claim_Amount','Line_of_Business'], 'Claims')
-                claims_data = cl_df.rename(columns=cl_map)
-                st.success("Claims columns mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    st.markdown("#### Opening Balances")
-    op_file = st.file_uploader("Upload Opening Balances (Portfolio, Opening_UPR, Opening_OCR, Opening_IBNR, Opening_ULAE, Opening_RA)", type=["csv","xlsx","xls"], key="fv_ob")
-    if op_file is not None:
-        try:
-            op_df = pd.read_csv(op_file) if op_file.name.endswith('.csv') else pd.read_excel(op_file)
-            op_df.columns = op_df.columns.astype(str).str.strip()
-            st.dataframe(op_df.head(3), width='stretch')
-            op_map = map_columns(op_df, ['Portfolio','Opening_UPR','Opening_OCR','Opening_IBNR','Opening_ULAE','Opening_RA'], 'OpeningBal')
-            opening_data = op_df.rename(columns=op_map)
-            st.success("Opening balance columns mapped.")
-        except Exception as e: st.error(f"Error: {e}")
-
-    # ---- CALCULATE ----
-    if st.button("Run Simplified Valuation", key="fv_run", width='stretch'):
-        if not selected:
-            st.warning("Select at least one reserve.")
-        else:
-            with st.spinner("Running valuation..."):
-                st.success("Valuation complete! Results would be displayed here.")
-
-# =============================================================================
-#  BRANCH 2 — FULL IFRS 17 LRC (PAA)
-# =============================================================================
-
-def _render_full_ifrs17_lrc_branch(report_date, report_client):
-    val_date = pd.Timestamp(str(report_date))
-    ifrs17_data = {}
-
-    # ---- CONFIGURATION TOGGLES ----
-    st.markdown('<div class="section-container"><h3>IFRS 17 Configuration Toggles</h3></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        iacf_toggle = st.selectbox("IACF Treatment", ["Expense Immediately", "Capitalize & Amortize"], key="cfg_iacf")
-    with c2:
-        discount_toggle = st.selectbox("Discounting", ["No Discounting", "Apply Discounting"], key="cfg_discount")
-    with c3:
-        invest_toggle = st.selectbox("Investment Components", ["No", "Yes"], key="cfg_invest")
-    with c4:
-        revenue_toggle = st.selectbox("Revenue Method", ["Passage of Time", "Emergence of Risk"], key="cfg_revenue")
-
-    # ---- DATA FILES ----
-    st.markdown('<div class="section-container"><h3>Upload Data Files</h3></div>', unsafe_allow_html=True)
-
-    # Section 1: Opening Balances
-    st.markdown("#### Section 1: Opening Balances")
-    ob_file = st.file_uploader("Upload Opening Balances (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_ob")
-    if ob_file is not None:
-        try:
-            ob_df = pd.read_csv(ob_file) if ob_file.name.endswith('.csv') else pd.read_excel(ob_file)
-            ob_df.columns = ob_df.columns.astype(str).str.strip()
-            st.dataframe(ob_df.head(3), width='stretch')
-            ob_map = map_columns(ob_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'OpeningBalances')
-            ob_df = ob_df.rename(columns=ob_map)
-            ob_df['Opening_LRC_Excl_Loss'] = pd.to_numeric(ob_df['Opening_LRC_Excl_Loss'], errors='coerce').fillna(0)
-            ob_df['Opening_Loss_Component'] = pd.to_numeric(ob_df['Opening_Loss_Component'], errors='coerce').fillna(0)
-            ifrs17_data['opening_balances'] = ob_df
-            st.success("Opening balances mapped.")
-        except Exception as e: st.error(f"Error: {e}")
-
-    # Section 2: Cashflows
-    st.markdown("#### Section 2: Cashflows")
-    cf_file = st.file_uploader("Upload Cashflows (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_cf")
-    if cf_file is not None:
-        try:
-            cf_df = pd.read_csv(cf_file) if cf_file.name.endswith('.csv') else pd.read_excel(cf_file)
-            cf_df.columns = cf_df.columns.astype(str).str.strip()
-            st.dataframe(cf_df.head(3), width='stretch')
-            cf_map = map_columns(cf_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'Cashflows')
-            cf_df = cf_df.rename(columns=cf_map)
-            cf_df['Premiums_Received'] = pd.to_numeric(cf_df['Premiums_Received'], errors='coerce').fillna(0)
-            cf_df['IACF_Paid'] = pd.to_numeric(cf_df['IACF_Paid'], errors='coerce').fillna(0)
-            cf_df['Investment_Components_Paid'] = pd.to_numeric(cf_df['Investment_Components_Paid'], errors='coerce').fillna(0)
-            ifrs17_data['cashflows'] = cf_df
-            st.success("Cashflows mapped.")
-        except Exception as e: st.error(f"Error: {e}")
-
-    # Section 3: Policy Data
-    st.markdown("#### Section 3: Policy Data")
-    pdf_file = st.file_uploader("Upload Premium Schedule (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_pd")
-    if pdf_file is not None:
-        try:
-            pol_df = pd.read_csv(pdf_file) if pdf_file.name.endswith('.csv') else pd.read_excel(pdf_file)
-            pol_df.columns = pol_df.columns.astype(str).str.strip()
-            st.dataframe(pol_df.head(3), width='stretch')
-            pol_map = map_columns(pol_df, ['Group','Start_Date','End_Date','Written_Premium'], 'PolicyData')
-            pol_df = pol_df.rename(columns=pol_map)
-            pol_df['Start_Date'] = pd.to_datetime(pol_df['Start_Date'], errors='coerce')
-            pol_df['End_Date'] = pd.to_datetime(pol_df['End_Date'], errors='coerce')
-            pol_df['Written_Premium'] = pd.to_numeric(pol_df['Written_Premium'], errors='coerce').fillna(0)
-            pol_df = pol_df.dropna(subset=['Start_Date','End_Date'])
-            pol_df = pol_df[pol_df['End_Date'] > pol_df['Start_Date']]
-            ifrs17_data['policy_data'] = pol_df
-            st.success("Policy data mapped.")
-        except Exception as e: st.error(f"Error: {e}")
-
-    # Section 3b: Investment Components
-    if invest_toggle == "Yes":
-        st.markdown("#### Section 3b: Investment Components")
-        ic_file = st.file_uploader("Upload Investment Components by Group (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_ic")
-        if ic_file is not None:
-            try:
-                ic_df = pd.read_csv(ic_file) if ic_file.name.endswith('.csv') else pd.read_excel(ic_file)
-                ic_df.columns = ic_df.columns.astype(str).str.strip()
-                st.dataframe(ic_df.head(3), width='stretch')
-                ic_map = map_columns(ic_df, ['Group','Total_Investment_Components'], 'InvestmentComponents')
-                ic_df = ic_df.rename(columns=ic_map)
-                ic_df['Total_Investment_Components'] = pd.to_numeric(ic_df['Total_Investment_Components'], errors='coerce').fillna(0)
-                ifrs17_data['investment_components'] = ic_df
-                st.success("Investment Components mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    # Section 4: Loss Component Data
-    st.markdown("#### Section 4: Loss Component Data (Ratio-Based)")
-    lc_file = st.file_uploader("Upload Loss Component Data (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_lc")
-    if lc_file is not None:
-        try:
-            lc_df = pd.read_csv(lc_file) if lc_file.name.endswith('.csv') else pd.read_excel(lc_file)
-            lc_df.columns = lc_df.columns.astype(str).str.strip()
-            st.dataframe(lc_df.head(3), width='stretch')
-            lc_map = map_columns(
-                lc_df,
-                ['Group', 'Expected_Future_Premiums', 'Loss_Ratio', 'Commission_Ratio',
-                 'Expense_Ratio', 'RA_Ratio'],
-                'LossComponent'
-            )
-            lc_df = lc_df.rename(columns=lc_map)
-            for col in ['Expected_Future_Premiums', 'Loss_Ratio', 'Commission_Ratio', 'Expense_Ratio', 'RA_Ratio']:
-                lc_df[col] = pd.to_numeric(lc_df[col], errors='coerce').fillna(0)
-            ifrs17_data['loss_component'] = lc_df
-            st.success("Loss Component data mapped.")
-        except Exception as e: st.error(f"Error: {e}")
-
-    # Section 5: Discounting Data
-    if discount_toggle == "Apply Discounting":
-        st.markdown("#### Section 5: Discounting Data (Yield Curve)")
-        yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_yc")
-        if yc_file is not None:
-            try:
-                yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
-                yc_df.columns = yc_df.columns.astype(str).str.strip()
-                st.dataframe(yc_df.head(3), width='stretch')
-                yc_map = map_columns(yc_df, ['Duration_Years','Spot_Rate'], 'YieldCurve')
-                yc_df = yc_df.rename(columns=yc_map)
-                yc_df['Duration_Years'] = pd.to_numeric(yc_df['Duration_Years'], errors='coerce')
-                yc_df['Spot_Rate'] = pd.to_numeric(yc_df['Spot_Rate'], errors='coerce')
-                yc_df = yc_df.dropna().sort_values('Duration_Years')
-                ifrs17_data['yield_curve'] = yc_df
-                st.success("Yield Curve mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    # Section 6: Revenue Recognition Data
-    if revenue_toggle == "Emergence of Risk":
-        st.markdown("#### Section 6: Revenue Recognition Data (Claims Curve)")
-        rc_file = st.file_uploader("Upload Claims Emergence Curve (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_rc")
-        if rc_file is not None:
-            try:
-                rc_df = pd.read_csv(rc_file) if rc_file.name.endswith('.csv') else pd.read_excel(rc_file)
-                rc_df.columns = rc_df.columns.astype(str).str.strip()
-                st.dataframe(rc_df.head(3), width='stretch')
-                rc_map = map_columns(rc_df, ['Period','Percentage'], 'ClaimsCurve')
-                rc_df = rc_df.rename(columns=rc_map)
-                rc_df['Percentage'] = pd.to_numeric(rc_df['Percentage'], errors='coerce').fillna(0)
-                ifrs17_data['claims_curve'] = rc_df
-                st.success("Claims Curve mapped.")
-            except Exception as e: st.error(f"Error: {e}")
-
-    # ---- RUN BUTTON ----
-    if st.button("Run Full IFRS 17 LRC Valuation", key="ifrs17_run", width='stretch'):
-        if 'policy_data' not in ifrs17_data or ifrs17_data['policy_data'].empty:
-            st.warning("Please upload Policy Data (Section 3) before running.")
-            return
-
-        with st.spinner("Running Full IFRS 17 LRC engine..."):
-            policy_df = ifrs17_data['policy_data'].copy()
-            portfolios = sorted(policy_df['Group'].dropna().unique().tolist())
-            st.info(f"Groups: {', '.join(portfolios)}")
-
-            policy_df['Policy_Days'] = (policy_df['End_Date'] - policy_df['Start_Date']).dt.days
-            policy_df = policy_df[policy_df['Policy_Days'] > 0]
-            policy_df['Passed_Days'] = (val_date - policy_df['Start_Date']).dt.days
-            policy_df['Passed_Days'] = np.clip(policy_df['Passed_Days'], 0, policy_df['Policy_Days'])
-            policy_df['Remaining_Days'] = policy_df['Policy_Days'] - policy_df['Passed_Days']
-            policy_df['UPR'] = policy_df['Written_Premium'] * (policy_df['Remaining_Days'] / policy_df['Policy_Days'])
-
-            lrc_results = {}
-
-            for group in portfolios:
-                group_policies = policy_df[policy_df['Group'] == group].copy()
-                if group_policies.empty: continue
-
-                group_cf = ifrs17_data['cashflows'][ifrs17_data['cashflows']['Group'] == group] if 'cashflows' in ifrs17_data else pd.DataFrame()
-                group_ob = ifrs17_data['opening_balances'][ifrs17_data['opening_balances']['Group'] == group] if 'opening_balances' in ifrs17_data else pd.DataFrame()
-                group_lc = ifrs17_data['loss_component'][ifrs17_data['loss_component']['Group'] == group] if 'loss_component' in ifrs17_data else pd.DataFrame()
-                group_ic = ifrs17_data['investment_components'][ifrs17_data['investment_components']['Group'] == group] if 'investment_components' in ifrs17_data else pd.DataFrame()
-
-                opening_lrc_excl_loss = float(group_ob['Opening_LRC_Excl_Loss'].values[0]) if not group_ob.empty else 0.0
-                opening_loss_component = float(group_ob['Opening_Loss_Component'].values[0]) if not group_ob.empty else 0.0
-
-                premiums_received = float(group_cf['Premiums_Received'].values[0]) if not group_cf.empty else 0.0
-                iacf_paid_raw = float(group_cf['IACF_Paid'].values[0]) if not group_cf.empty else 0.0
-                investment_components_paid = float(group_cf['Investment_Components_Paid'].values[0]) if not group_cf.empty else 0.0
-                iacf_paid = iacf_paid_raw if iacf_toggle == "Capitalize & Amortize" else 0.0
-
-                group_policies['Duration_Years'] = group_policies['Policy_Days'] / 365.25
-                total_wp = group_policies['Written_Premium'].sum()
-                weighted_duration = np.average(group_policies['Duration_Years'], weights=group_policies['Written_Premium']) if total_wp > 0 else 0.0
-                locked_in_years = max(1, int(np.ceil(weighted_duration))) if weighted_duration > 0 else 1
-
-                total_written_premium = total_wp
-                total_policy_days = group_policies['Policy_Days'].sum()
-                total_passed_days = group_policies['Passed_Days'].sum()
-
-                if revenue_toggle == "Passage of Time":
-                    allocation_factor = (total_passed_days / total_policy_days) if total_policy_days > 0 else 0.0
-                    allocated_premium = total_written_premium * allocation_factor
-                else:
-                    claims_curve = ifrs17_data.get('claims_curve')
-                    allocation_factor = float(claims_curve['Percentage'].sum()) if claims_curve is not None and not claims_curve.empty else 0.0
-                    allocated_premium = total_written_premium * allocation_factor
-
-                total_investment_components = float(group_ic['Total_Investment_Components'].values[0]) if not group_ic.empty else 0.0
-                allocated_investment_components = total_investment_components * allocation_factor
-
-                locked_in_rate = 0.0
-                if discount_toggle == "Apply Discounting":
-                    yield_curve = ifrs17_data.get('yield_curve')
-                    if yield_curve is not None and not yield_curve.empty:
-                        yc_years = yield_curve['Duration_Years'].values
-                        yc_rates = yield_curve['Spot_Rate'].values
-                        if locked_in_years in yc_years:
-                            locked_in_rate = float(yc_rates[np.where(yc_years == locked_in_years)[0][0]])
-                        else:
-                            locked_in_rate = float(np.interp(locked_in_years, yc_years, yc_rates, left=yc_rates[0], right=yc_rates[-1]))
-                financing_adjustment = opening_lrc_excl_loss * locked_in_rate
-
-                insurance_revenue = (allocated_premium - allocated_investment_components) + financing_adjustment
-
-                iacf_amortized = (iacf_paid * allocation_factor) if iacf_toggle == "Capitalize & Amortize" else 0.0
-
-                if not group_lc.empty:
-                    expected_future_premiums = float(group_lc['Expected_Future_Premiums'].values[0])
-                    loss_ratio = float(group_lc['Loss_Ratio'].values[0])
-                    commission_ratio = float(group_lc['Commission_Ratio'].values[0])
-                    expense_ratio = float(group_lc['Expense_Ratio'].values[0])
-                    ra_ratio = float(group_lc['RA_Ratio'].values[0])
-                    combined_ratio = loss_ratio + commission_ratio + expense_ratio + ra_ratio
-                    closing_loss_component = expected_future_premiums * max(0.0, combined_ratio - 1.0)
-                else:
-                    expected_future_premiums = 0.0
-                    loss_ratio = commission_ratio = expense_ratio = ra_ratio = 0.0
-                    combined_ratio = 0.0
-                    closing_loss_component = 0.0
-
-                loss_reversals = min(opening_loss_component, max(allocated_premium, 0.0))
-                new_losses_arising = closing_loss_component - opening_loss_component + loss_reversals
-
-                closing_lrc_excl_loss = (
-                    opening_lrc_excl_loss
-                    + premiums_received
-                    - insurance_revenue
-                    - iacf_paid
-                    + iacf_amortized
-                    + financing_adjustment
-                    - investment_components_paid
-                )
-                total_closing_lrc = closing_lrc_excl_loss + closing_loss_component
-
-                audit_diff = abs(total_closing_lrc - (closing_lrc_excl_loss + closing_loss_component))
-                audit_pass = audit_diff <= 0.01
-
-                upr_snapshot = float(group_policies['UPR'].sum())
-                upr_diff_abs = total_closing_lrc - upr_snapshot
-                upr_diff_pct = (upr_diff_abs / upr_snapshot * 100) if upr_snapshot != 0 else 0.0
-
-                lrc_results[group] = {
-                    'Opening_LRC_Excl_Loss': opening_lrc_excl_loss,
-                    'Opening_Loss_Component': opening_loss_component,
-                    'Premiums_Received': premiums_received,
-                    'Allocated_Premium': allocated_premium,
-                    'Allocated_Investment_Components': allocated_investment_components,
-                    'Insurance_Revenue': insurance_revenue,
-                    'IACF_Paid': iacf_paid,
-                    'IACF_Amortized': iacf_amortized,
-                    'Financing_Adjustment': financing_adjustment,
-                    'Locked_In_Rate': locked_in_rate,
-                    'Locked_In_Years': locked_in_years,
-                    'Investment_Components_Paid': investment_components_paid,
-                    'Loss_Ratio': loss_ratio,
-                    'Commission_Ratio': commission_ratio,
-                    'Expense_Ratio': expense_ratio,
-                    'RA_Ratio': ra_ratio,
-                    'Combined_Ratio': combined_ratio,
-                    'Expected_Future_Premiums': expected_future_premiums,
-                    'Loss_Reversals': loss_reversals,
-                    'New_Losses_Arising': new_losses_arising,
-                    'Closing_LRC_Excl_Loss': closing_lrc_excl_loss,
-                    'Closing_Loss_Component': closing_loss_component,
-                    'Total_Closing_LRC': total_closing_lrc,
-                    'Audit_Diff': audit_diff,
-                    'Audit_Pass': audit_pass,
-                    'UPR_Snapshot': upr_snapshot,
-                    'UPR_Diff_Abs': upr_diff_abs,
-                    'UPR_Diff_Pct': upr_diff_pct,
-                }
-
-            st.success(f"Full IFRS 17 LRC calculated for {len(lrc_results)} group(s).")
-
-            st.subheader("IFRS 17 LRC Results")
-
-            st.subheader("LRC Summary by Group")
-            summary_rows = []
-            for group, data in lrc_results.items():
-                summary_rows.append({
-                    'Group': group,
-                    'LRC (excl. Loss Component)': data['Closing_LRC_Excl_Loss'],
-                    'Loss Component': data['Closing_Loss_Component'],
-                    'Total LRC': data['Total_Closing_LRC'],
-                    'Audit': '✓ Pass' if data['Audit_Pass'] else '✗ Fail',
-                })
-            summary_df = pd.DataFrame(summary_rows)
-            disp_summary = summary_df.copy()
-            for c in disp_summary.columns:
-                if c not in ('Group', 'Audit'):
-                    disp_summary[c] = disp_summary[c].apply(lambda x: f"{x:,.2f}")
-            st.dataframe(disp_summary, width='stretch', hide_index=True)
-
-            st.subheader("LRC Rollforward — by Group")
-            for group, data in lrc_results.items():
-                st.markdown(f"**{group}**")
-                roll_data = {
-                    "Line Item": [
-                        "Opening LRC (excl. Loss)", "Opening Loss Component", "Premiums Received",
-                        "Insurance Revenue", "IACF Paid", "IACF Amortized",
-                        "Financing Adjustment", "Investment Components Paid",
-                        "Loss Reversals", "New Losses Arising",
-                        "Closing LRC (excl. Loss)", "Closing Loss Component", "Total Closing LRC"
-                    ],
-                    "Amount": [
-                        f"{data['Opening_LRC_Excl_Loss']:,.2f}",
-                        f"{data['Opening_Loss_Component']:,.2f}",
-                        f"{data['Premiums_Received']:,.2f}",
-                        f"{-data['Insurance_Revenue']:,.2f}",
-                        f"{-data['IACF_Paid']:,.2f}",
-                        f"{data['IACF_Amortized']:,.2f}",
-                        f"{data['Financing_Adjustment']:,.2f}",
-                        f"{-data['Investment_Components_Paid']:,.2f}",
-                        f"{-data['Loss_Reversals']:,.2f}",
-                        f"{data['New_Losses_Arising']:,.2f}",
-                        f"{data['Closing_LRC_Excl_Loss']:,.2f}",
-                        f"{data['Closing_Loss_Component']:,.2f}",
-                        f"{data['Total_Closing_LRC']:,.2f}"
-                    ]
-                }
-                st.dataframe(pd.DataFrame(roll_data), width='stretch', hide_index=True)
-
-            st.subheader("UPR Comparison (IFRS 4 vs IFRS 17)")
-            st.info("The UPR snapshot is NOT used to drive the LRC calculation. It is computed independently for comparison purposes.")
-            comparison_rows = []
-            for group, data in lrc_results.items():
-                comparison_rows.append({
-                    'Group': group,
-                    'UPR (IFRS 4)': data['UPR_Snapshot'],
-                    'Total LRC (IFRS 17)': data['Total_Closing_LRC'],
-                    'Difference ($)': data['UPR_Diff_Abs'],
-                    'Difference (%)': f"{data['UPR_Diff_Pct']:.2f}%"
-                })
-            comparison_df = pd.DataFrame(comparison_rows)
-            disp_comp = comparison_df.copy()
-            for c in disp_comp.columns:
-                if c not in ('Group', 'Difference (%)'):
-                    disp_comp[c] = disp_comp[c].apply(lambda x: f"{x:,.2f}")
-            st.dataframe(disp_comp, width='stretch', hide_index=True)
-
-            st.subheader("Consolidated LRC Rollforward")
-            agg = lambda key: sum(d[key] for d in lrc_results.values())
-            consol_data = {
-                "Line Item": [
-                    "Opening LRC (excl. Loss)", "Opening Loss Component", "Premiums Received",
-                    "Insurance Revenue", "IACF Paid", "IACF Amortized",
-                    "Financing Adjustment", "Investment Components Paid",
-                    "Loss Reversals", "New Losses Arising",
-                    "Closing LRC (excl. Loss)", "Closing Loss Component", "Total Closing LRC"
-                ],
-                "Amount": [
-                    f"{agg('Opening_LRC_Excl_Loss'):,.2f}", f"{agg('Opening_Loss_Component'):,.2f}",
-                    f"{agg('Premiums_Received'):,.2f}", f"{-agg('Insurance_Revenue'):,.2f}",
-                    f"{-agg('IACF_Paid'):,.2f}", f"{agg('IACF_Amortized'):,.2f}",
-                    f"{agg('Financing_Adjustment'):,.2f}", f"{-agg('Investment_Components_Paid'):,.2f}",
-                    f"{-agg('Loss_Reversals'):,.2f}", f"{agg('New_Losses_Arising'):,.2f}",
-                    f"{agg('Closing_LRC_Excl_Loss'):,.2f}", f"{agg('Closing_Loss_Component'):,.2f}",
-                    f"{agg('Total_Closing_LRC'):,.2f}"
-                ]
-            }
-            st.dataframe(pd.DataFrame(consol_data), width='stretch', hide_index=True)
+    st.info("Full Valuation module is under development. Please use the individual calculators for now.")
+    
+    back_button('home', ['Home'])
 
 
 # =============================================================================
@@ -1895,6 +1415,7 @@ page_renderers = {
     'risk_adjustment': render_risk_adjustment,
     'upr_calculator': render_upr_calculator,
     'ocr_calculator': render_ocr_calculator,
+    'percentage_calculator': render_percentage_calculator,
     'bcl_calculator': render_bcl_calculator,
     'capecod_calculator': render_capecod_calculator,
     'bf_calculator': render_bf_calculator,
