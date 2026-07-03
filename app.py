@@ -1640,7 +1640,7 @@ def render_capecod_calculator():
 
 
 # =============================================================================
-#  CALCULATOR: BF IBNR (FIXED)
+#  CALCULATOR: BF IBNR (WITH MULTI-LDF SUPPORT)
 # =============================================================================
 
 def render_bf_calculator():
@@ -1648,7 +1648,7 @@ def render_bf_calculator():
     st.markdown("""
     <div class="hero">
         <h1>Bornhuetter-Ferguson — IBNR</h1>
-        <p>Blends Chain Ladder with Expected Loss Ratio</p>
+        <p>Multi-LDF Methods with Expected Loss Ratio</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1675,7 +1675,10 @@ def render_bf_calculator():
         df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
         df.columns = df.columns.astype(str).str.strip()
         
+        st.markdown("#### Data Preview")
+        st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
+        
         c1, c2, c3 = st.columns(3)
         with c1:
             loss_col = st.selectbox("Loss Date", cols, key="bf_ld")
@@ -1725,83 +1728,89 @@ def render_bf_calculator():
                 return
             
             with st.spinner("Calculating BF IBNR..."):
-                all_results = []
+                # Calculate all LDFs for display
+                sample_amt = amount_cols[0]
+                lob_data_sample = df[df[lob_col] == lobs[0]].copy() if lobs else df.copy()
+                _, sample_cum, _ = engine_utils.build_triangles(
+                    lob_data_sample, loss_col, rep_col, sample_amt, from_dt, grain, n_periods
+                )
                 
+                all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n_periods)
+                
+                st.markdown("#### Development Factors (All Methods)")
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Regression": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df.round(4), use_container_width=True)
+                
+                # Recommend best LDF method
+                rec_method = "volume_weighted"
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"💡 **Recommended:** {rec_method.replace('_', ' ').title()} (lowest CV: {min_cv:.2%})")
+                
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", 
+                     "medial", "linear_regression", "weighted_last_3"],
+                    index=["volume_weighted", "simple_average", "geometric", 
+                           "medial", "linear_regression", "weighted_last_3"].index(rec_method),
+                    key="bf_ldf_method"
+                )
+                
+                all_results = []
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    prems = [1.0] * n_periods  # Default premiums
+                    prems = [1.0] * n_periods
                     
                     for ac in amount_cols:
                         _, cum, _ = engine_utils.build_triangles(
                             lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods
                         )
                         
-                        # Try the full signature first, fall back to basic
-                        try:
-                            result = ibnr_bf.calculate_bf_ibnr(
-                                cum_triangle=cum,
-                                premiums=prems,
-                                elr=elr_dict.get(lob, 0.7),
-                                start_date=from_dt,
-                                period_unit=grain,
-                                selected_ldf_method="volume_weighted",
-                                use_inflation=False,
-                                cum_inflation=None,
-                                per_period_rates=None,
-                                use_discounting=False,
-                                spot_rates=None,
-                                flat_rate=None
-                            )
-                        except TypeError:
-                            # Fall back to basic version (no inflation/discounting params)
-                            try:
-                                result = ibnr_bf.calculate_bf_ibnr(
-                                    cum_triangle=cum,
-                                    premiums=prems,
-                                    elr=elr_dict.get(lob, 0.7),
-                                    start_date=from_dt,
-                                    period_unit=grain
-                                )
-                            except TypeError:
-                                # Try without period_unit
-                                result = ibnr_bf.calculate_bf_ibnr(
-                                    cum_triangle=cum,
-                                    premiums=prems,
-                                    elr=elr_dict.get(lob, 0.7),
-                                    start_date=from_dt
-                                )
-                        
+                        result = ibnr_bf.calculate_bf_ibnr(
+                            cum_triangle=cum,
+                            premiums=prems,
+                            elr=elr_dict.get(lob, 0.7),
+                            start_date=from_dt,
+                            period_unit=grain,
+                            selected_ldf_method=selected_method,
+                            use_inflation=False,
+                            cum_inflation=None,
+                            per_period_rates=None,
+                            use_discounting=False,
+                            spot_rates=None,
+                            flat_rate=None
+                        )
                         res_df = result['results_df']
                         res_df['LOB'] = lob
                         res_df['Amount_Col'] = ac
                         all_results.append(res_df)
                 
                 final_df = pd.concat(all_results, ignore_index=True)
-                
-                # Find IBNR column dynamically
-                ibnr_col = next(
-                    (c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 
-                    'BF_IBNR'
-                )
-                if ibnr_col not in final_df.columns:
-                    ibnr_col = [c for c in final_df.columns if 'IBNR' in c][0]
-                
-                current_col = next(
-                    (c for c in final_df.columns if 'Current' in c), 
-                    'Current_Claims'
-                )
-                
-                summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
+                summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'BF_IBNR']].sum().reset_index()
             
             st.markdown("### 📊 BF IBNR Summary")
             
             disp = summary.copy()
-            for c in [current_col, ibnr_col]:
+            for c in ['Current_Claims', 'BF_IBNR']:
                 if c in disp.columns:
                     disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
             st.dataframe(disp, use_container_width=True, hide_index=True)
             
-            total_ibnr = summary[ibnr_col].sum()
+            total_ibnr = summary['BF_IBNR'].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
             
             output = BytesIO()
