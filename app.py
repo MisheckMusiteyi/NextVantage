@@ -1640,7 +1640,7 @@ def render_capecod_calculator():
 
 
 # =============================================================================
-#  CALCULATOR: BF IBNR
+#  CALCULATOR: BF IBNR (FIXED)
 # =============================================================================
 
 def render_bf_calculator():
@@ -1736,20 +1736,41 @@ def render_bf_calculator():
                             lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods
                         )
                         
-                        result = ibnr_bf.calculate_bf_ibnr(
-                            cum_triangle=cum,
-                            premiums=prems,
-                            elr=elr_dict.get(lob, 0.7),
-                            start_date=from_dt,
-                            period_unit=grain,
-                            selected_ldf_method="volume_weighted",
-                            use_inflation=False,
-                            cum_inflation=None,
-                            per_period_rates=None,
-                            use_discounting=False,
-                            spot_rates=None,
-                            flat_rate=None
-                        )
+                        # Try the full signature first, fall back to basic
+                        try:
+                            result = ibnr_bf.calculate_bf_ibnr(
+                                cum_triangle=cum,
+                                premiums=prems,
+                                elr=elr_dict.get(lob, 0.7),
+                                start_date=from_dt,
+                                period_unit=grain,
+                                selected_ldf_method="volume_weighted",
+                                use_inflation=False,
+                                cum_inflation=None,
+                                per_period_rates=None,
+                                use_discounting=False,
+                                spot_rates=None,
+                                flat_rate=None
+                            )
+                        except TypeError:
+                            # Fall back to basic version (no inflation/discounting params)
+                            try:
+                                result = ibnr_bf.calculate_bf_ibnr(
+                                    cum_triangle=cum,
+                                    premiums=prems,
+                                    elr=elr_dict.get(lob, 0.7),
+                                    start_date=from_dt,
+                                    period_unit=grain
+                                )
+                            except TypeError:
+                                # Try without period_unit
+                                result = ibnr_bf.calculate_bf_ibnr(
+                                    cum_triangle=cum,
+                                    premiums=prems,
+                                    elr=elr_dict.get(lob, 0.7),
+                                    start_date=from_dt
+                                )
+                        
                         res_df = result['results_df']
                         res_df['LOB'] = lob
                         res_df['Amount_Col'] = ac
@@ -1757,8 +1778,18 @@ def render_bf_calculator():
                 
                 final_df = pd.concat(all_results, ignore_index=True)
                 
-                ibnr_col = next((c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 'BF_IBNR')
-                current_col = next((c for c in final_df.columns if 'Current' in c), 'Current_Claims')
+                # Find IBNR column dynamically
+                ibnr_col = next(
+                    (c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 
+                    'BF_IBNR'
+                )
+                if ibnr_col not in final_df.columns:
+                    ibnr_col = [c for c in final_df.columns if 'IBNR' in c][0]
+                
+                current_col = next(
+                    (c for c in final_df.columns if 'Current' in c), 
+                    'Current_Claims'
+                )
                 
                 summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
             
