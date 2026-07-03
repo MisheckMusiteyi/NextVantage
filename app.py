@@ -465,4 +465,1996 @@ def render_bcl_calculator():
     st.markdown('<div class="main-container">', unsafe_allow_html=True)
 
     c1,c2,c3,c4 = st.columns(4)
-    with
+    with c1: client_name = st.text_input("Client", "Client", key="bcl_cn").strip()
+    with c2: from_date = st.date_input("From Date", date(2020,1,1), key="bcl_fd")
+    with c3: to_date = st.date_input("To Date", date(2025,12,31), key="bcl_td")
+    with c4: grain = st.selectbox("Grain", ["Yearly","Quarterly","Monthly"], key="bcl_gr")
+
+    grain_map = {"Yearly":"Y","Quarterly":"Q","Monthly":"M"}
+    grain_code = grain_map[grain]
+    ppy = {"Y":1, "Q":4, "M":12}[grain_code]
+
+    uploaded = st.file_uploader("Upload claims file (CSV/Excel)", type=["csv","xlsx","xls"], key="bcl_f")
+    if uploaded is None:
+        st.info("Upload a claims file with Loss Date, Report Date, Line of Business, and Claim Amount columns.")
+        back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods']); return
+
+    try:
+        df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df.columns = df.columns.astype(str).str.strip()
+        st.dataframe(df.head(3), width='stretch')
+        cols = df.columns.tolist()
+        c1,c2,c3,c4 = st.columns(4)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="bcl_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="bcl_rd")
+        with c3: lob_col = st.selectbox("Line of Business", cols, key="bcl_lob")
+        
+        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
+        amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
+        amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="bcl_amt")
+
+        if not amount_cols:
+            st.warning("Please select at least one Amount column.")
+            return
+
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce').astype('datetime64[ns]')
+        df[rep_col]  = pd.to_datetime(df[rep_col],  errors='coerce').astype('datetime64[ns]')
+        for ac in amount_cols:
+            df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
+        
+        df = df.dropna(subset=[loss_col, rep_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        df = _date_filter(df, loss_col, from_date, to_date)
+
+        # ===== INFLATION & DISCOUNTING INPUTS =====
+        st.markdown("#### Step 3: Inflation & Discounting Adjustments")
+        c1, c2 = st.columns(2)
+        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bcl_inf")
+        with c2: use_discounting = st.checkbox("Apply Discounting", key="bcl_disc")
+
+        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        if use_inflation:
+            cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy)
+        if use_discounting:
+            spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy)
+
+        # ===== CORE LOGIC =====
+        if st.button("Calculate BCL IBNR", key="bcl_run", width='stretch'):
+            lobs = sorted(df[lob_col].dropna().unique())
+            n_periods = (to_date.year - from_date.year) * ppy + 1
+            
+            # For the UI, we display the LDF matrix for the first selected amount column
+            st.subheader("LDF Selection")
+            st.info("Tail factor is hardcoded to 1.000 (fully developed).")
+            
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain_code, n_periods)
+                all_ldfs = ibnr_bcl.calculate_all_ldfs(sample_cum, n_periods)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n_periods),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
+
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    # Calculate CV for first 3 factors
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="bcl_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities to display LDF selection.")
+                selected_method = "volume_weighted"
+            
+            all_results = []
+            for lob in lobs:
+                lob_data = df[df[lob_col]==lob].copy()
+                for ac in amount_cols:
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
+                    
+                    result = ibnr_bcl.calculate_bcl_ibnr(
+                        cum_triangle=cum,
+                        start_date=from_dt,
+                        period_unit=grain_code,
+                        selected_ldf_method=selected_method,
+                        use_inflation=use_inflation,
+                        cum_inflation=cum_inflation,
+                        per_period_rates=per_period_rates,
+                        use_discounting=use_discounting,
+                        spot_rates=spot_rates,
+                        flat_rate=flat_rate
+                    )
+                    res_df = result['results_df']
+                    res_df['LOB'] = lob
+                    res_df['Amount_Col'] = ac
+                    all_results.append(res_df)
+            
+            final_df = pd.concat(all_results, ignore_index=True)
+            summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'IBNR']].sum().reset_index()
+            
+            st.subheader("BCL IBNR Summary")
+            disp = summary.copy()
+            for c in ['Current_Claims', 'IBNR']:
+                disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp, width='stretch', hide_index=True)
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as w:
+                summary.to_excel(w, index=False, sheet_name='BCL_Summary')
+                final_df.to_excel(w, index=False, sheet_name='BCL_Detail')
+            output.seek(0)
+            sc = re.sub(r'[\\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.xlsx", key="bcl_dl")
+
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+
+    back_button('ibnr_menu', ['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+
+
+def render_capecod_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Cape Cod IBNR</h1><p>Multi-LDF selection, Inflation & Discounting, Multiple Amounts</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1: client_name=st.text_input("Client","Client",key="cc_cn").strip()
+    with c2: from_date=st.date_input("From Date",date(2020,1,1),key="cc_fd")
+    with c3: to_date=st.date_input("To Date",date(2025,12,31),key="cc_td")
+    claims_file=st.file_uploader("Upload claims file",type=["csv","xlsx","xls"],key="cc_cf")
+    prem_file=st.file_uploader("Upload premiums file (Portfolio | Premium per accident year)",type=["csv","xlsx","xls"],key="cc_pf")
+    if claims_file is None or prem_file is None:
+        st.info("Upload both claims and premiums files to run Cape Cod.")
+        back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods']); return
+    
+    try:
+        df=pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
+        df.columns=df.columns.astype(str).str.strip()
+        prem_df=pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+        prem_df.columns=prem_df.columns.astype(str).str.strip()
+        cols=df.columns.tolist()
+        c1,c2,c3,c4=st.columns(4)
+        with c1: loss_col=st.selectbox("Loss Date",cols,key="cc_ld")
+        with c2: rep_col=st.selectbox("Report Date",cols,key="cc_rd")
+        with c3: lob_col=st.selectbox("LOB",cols,key="cc_lob")
+        
+        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
+        amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
+        amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="cc_amt")
+
+        if not amount_cols:
+            st.warning("Please select at least one Amount column.")
+            return
+
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
+        for ac in amount_cols:
+            df[ac]=pd.to_numeric(df[ac],errors='coerce').fillna(0)
+            
+        df=df.dropna(subset=[loss_col,rep_col])
+        from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
+        df=_date_filter(df, loss_col, from_date, to_date)
+
+        # ===== PREMIUM DATA COLUMN MAPPING =====
+        st.markdown("#### Premium Data Column Mapping")
+        p_cols = prem_df.columns.tolist()
+        c1, c2, c3 = st.columns(3)
+        with c1: prem_lob_col = st.selectbox("LOB / Portfolio Column", p_cols, key="cc_prem_lob")
+        with c2: prem_amt_col = st.selectbox("Premium Amount Column", p_cols, key="cc_prem_amt")
+        with c3: prem_date_col = st.selectbox("Premium Date Column (Optional)", ["None"] + p_cols, key="cc_prem_date")
+        
+        use_prem_date = prem_date_col != "None"
+        prem_df[prem_lob_col] = prem_df[prem_lob_col].astype(str)
+        prem_df[prem_amt_col] = pd.to_numeric(prem_df[prem_amt_col], errors='coerce').fillna(0)
+        if use_prem_date:
+            prem_df[prem_date_col] = pd.to_datetime(prem_df[prem_date_col], errors='coerce')
+
+        # ===== INFLATION & DISCOUNTING INPUTS =====
+        st.markdown("#### Inflation & Discounting Adjustments")
+        c1, c2 = st.columns(2)
+        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
+        with c2: use_discounting = st.checkbox("Apply Discounting", key="cc_disc")
+
+        grain = "Y"; ppy = 1
+        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        if use_inflation:
+            cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy)
+        if use_discounting:
+            spot_rates, flat_rate = load_discounting_data_ui(grain, ppy)
+
+        # ===== CORE LOGIC =====
+        if st.button("Calculate Cape Cod IBNR", key="cc_run", width='stretch'):
+            lobs=sorted(df[lob_col].dropna().unique())
+            n = (to_date.year - from_date.year) + 1
+            
+            # LDF Selection UI
+            st.subheader("LDF Selection")
+            st.info("Tail factor is hardcoded to 1.000 (fully developed).")
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
+                all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
+
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="cc_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities.")
+                selected_method = "volume_weighted"
+            
+            all_results = []
+            for lob in lobs:
+                lob_data = df[df[lob_col]==lob].copy()
+                # Get premiums for this LOB
+                prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
+                if use_prem_date:
+                    prem_sub['Year'] = prem_sub[prem_date_col].dt.year
+                    prems = prem_sub.groupby('Year')[prem_amt_col].sum().reindex(range(from_dt.year, from_dt.year + n), fill_value=0).tolist()
+                else:
+                    prems = prem_sub[prem_amt_col].tolist()
+                    if len(prems) < n: prems.extend([0] * (n - len(prems)))
+                    elif len(prems) > n: prems = prems[:n]
+
+                for ac in amount_cols:
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
+                    
+                    result = ibnr_cc.calculate_cape_cod_ibnr(
+                        cum_triangle=cum,
+                        premiums=prems,
+                        start_date=from_dt,
+                        period_unit=grain,
+                        selected_ldf_method=selected_method,
+                        use_inflation=use_inflation,
+                        cum_inflation=cum_inflation,
+                        per_period_rates=per_period_rates,
+                        use_discounting=use_discounting,
+                        spot_rates=spot_rates,
+                        flat_rate=flat_rate
+                    )
+                    res_df = result['results_df']
+                    res_df['LOB'] = lob
+                    res_df['Amount_Col'] = ac
+                    all_results.append(res_df)
+            
+            final_df = pd.concat(all_results, ignore_index=True)
+            summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'Cape_Cod_IBNR']].sum().reset_index()
+            
+            st.subheader("Cape Cod IBNR Summary")
+            disp = summary.copy()
+            for c in ['Current_Claims', 'Cape_Cod_IBNR']:
+                disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp, width='stretch', hide_index=True)
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as w:
+                summary.to_excel(w, index=False, sheet_name='CapeCod_Summary')
+                final_df.to_excel(w, index=False, sheet_name='CapeCod_Detail')
+            output.seek(0)
+            sc = re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.xlsx", key="cc_dl")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+
+
+def render_bf_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) IBNR</h1><p>Multi-LDF selection, Inflation & Discounting, Multiple Amounts</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1: client_name=st.text_input("Client","Client",key="bf_cn").strip()
+    with c2: from_date=st.date_input("From Date",date(2020,1,1),key="bf_fd")
+    with c3: to_date=st.date_input("To Date",date(2025,12,31),key="bf_td")
+    claims_file=st.file_uploader("Upload claims file",type=["csv","xlsx","xls"],key="bf_cf")
+    prem_file=st.file_uploader("Upload premiums file",type=["csv","xlsx","xls"],key="bf_pf")
+    if claims_file is None:
+        st.info("Upload claims file (and optionally premiums) to run BF.")
+        back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods']); return
+    try:
+        df=pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
+        df.columns=df.columns.astype(str).str.strip()
+        cols=df.columns.tolist()
+        c1,c2,c3,c4=st.columns(4)
+        with c1: loss_col=st.selectbox("Loss Date",cols,key="bf_ld")
+        with c2: rep_col=st.selectbox("Report Date",cols,key="bf_rd")
+        with c3: lob_col=st.selectbox("LOB",cols,key="bf_lob")
+        
+        # ===== MULTIPLE AMOUNT COLUMN SELECTION =====
+        amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
+        amount_cols = st.multiselect("Select Amount Column(s)", amount_candidates, key="bf_amt")
+
+        if not amount_cols:
+            st.warning("Please select at least one Amount column.")
+            return
+
+        df[loss_col]=pd.to_datetime(df[loss_col],errors='coerce').astype('datetime64[ns]')
+        df[rep_col]=pd.to_datetime(df[rep_col],errors='coerce').astype('datetime64[ns]')
+        for ac in amount_cols:
+            df[ac]=pd.to_numeric(df[ac],errors='coerce').fillna(0)
+            
+        df=df.dropna(subset=[loss_col,rep_col])
+        from_dt=pd.Timestamp(str(from_date)); to_dt=pd.Timestamp(str(to_date))
+        df=_date_filter(df, loss_col, from_date, to_date)
+        lobs=sorted(df[lob_col].dropna().unique())
+
+        # ===== PREMIUM DATA COLUMN MAPPING =====
+        st.markdown("#### Premium Data Column Mapping")
+        if prem_file is not None:
+            prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+            prem_df.columns = prem_df.columns.astype(str).str.strip()
+            prem_cols = prem_df.columns.tolist()
+            c1, c2, c3 = st.columns(3)
+            with c1: prem_lob_col = st.selectbox("LOB / Portfolio Column", prem_cols, key="bf_prem_lob")
+            with c2: prem_amt_col = st.selectbox("Premium Amount Column", prem_cols, key="bf_prem_amt")
+            with c3: prem_date_col = st.selectbox("Premium Date Column (Optional)", ["None"] + prem_cols, key="bf_prem_date")
+            
+            use_prem_date = prem_date_col != "None"
+            prem_df[prem_lob_col] = prem_df[prem_lob_col].astype(str)
+            prem_df[prem_amt_col] = pd.to_numeric(prem_df[prem_amt_col], errors='coerce').fillna(0)
+            if use_prem_date:
+                prem_df[prem_date_col] = pd.to_datetime(prem_df[prem_date_col], errors='coerce')
+        else:
+            prem_df = None
+            use_prem_date = False
+
+        st.markdown("**ELR per Portfolio (%):**")
+        elr_cols=st.columns(min(len(lobs),4))
+        elr_dict={}
+        for i,lob in enumerate(lobs):
+            with elr_cols[i%4]: elr_dict[lob]=st.number_input(f"ELR {lob}",0.0,200.0,70.0,1.0,key=f"bf_elr_{lob}")/100
+
+        # ===== INFLATION & DISCOUNTING INPUTS =====
+        st.markdown("#### Inflation & Discounting Adjustments")
+        c1, c2 = st.columns(2)
+        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
+        with c2: use_discounting = st.checkbox("Apply Discounting", key="bf_disc")
+
+        grain = "Y"; ppy = 1
+        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+        if use_inflation:
+            cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy)
+        if use_discounting:
+            spot_rates, flat_rate = load_discounting_data_ui(grain, ppy)
+
+        # ===== CORE LOGIC =====
+        if st.button("Calculate BF IBNR", key="bf_run", width='stretch'):
+            n = (to_date.year - from_date.year) + 1
+
+            # LDF Selection UI
+            st.subheader("LDF Selection")
+            st.info("Tail factor is hardcoded to 1.000 (fully developed).")
+            if engine_utils is not None:
+                sample_amt = amount_cols[0]
+                _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n)
+                all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n)
+                
+                ldf_df = pd.DataFrame({
+                    "Dev Period": range(1, n),
+                    "Vol-Weighted": all_ldfs["volume_weighted"],
+                    "Simple Avg": all_ldfs["simple_average"],
+                    "Geometric": all_ldfs["geometric"],
+                    "Medial": all_ldfs["medial"],
+                    "Lin Reg (clamped)": all_ldfs["linear_regression"],
+                    "Wtd Last 3": all_ldfs["weighted_last_3"]
+                })
+                st.dataframe(ldf_df, width='stretch')
+
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+
+                selected_method = st.selectbox(
+                    "Select LDF Method",
+                    ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                    index=0,
+                    key="bf_ldf_method"
+                )
+            else:
+                st.error("Could not load engine utilities.")
+                selected_method = "volume_weighted"
+            
+            all_results = []
+            for lob in lobs:
+                lob_data = df[df[lob_col]==lob].copy()
+                # Get premiums
+                if prem_df is not None:
+                    prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
+                    if use_prem_date:
+                        prem_sub['Year'] = prem_sub[prem_date_col].dt.year
+                        prems = prem_sub.groupby('Year')[prem_amt_col].sum().reindex(range(from_dt.year, from_dt.year + n), fill_value=0).tolist()
+                    else:
+                        prems = prem_sub[prem_amt_col].tolist()
+                        if len(prems) < n: prems.extend([0] * (n - len(prems)))
+                        elif len(prems) > n: prems = prems[:n]
+                else:
+                    prems = [1] * n # Placeholder if no premium file provided
+
+                for ac in amount_cols:
+                    _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n)
+                    
+                    result = ibnr_bf.calculate_bf_ibnr(
+                        cum_triangle=cum,
+                        premiums=prems,
+                        elr=elr_dict.get(lob, 0.7),
+                        start_date=from_dt,
+                        period_unit=grain,
+                        selected_ldf_method=selected_method,
+                        use_inflation=use_inflation,
+                        cum_inflation=cum_inflation,
+                        per_period_rates=per_period_rates,
+                        use_discounting=use_discounting,
+                        spot_rates=spot_rates,
+                        flat_rate=flat_rate
+                    )
+                    res_df = result['results_df']
+                    res_df['LOB'] = lob
+                    res_df['Amount_Col'] = ac
+                    all_results.append(res_df)
+            
+            final_df = pd.concat(all_results, ignore_index=True)
+            summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'BF_IBNR']].sum().reset_index()
+            
+            st.subheader("BF IBNR Summary")
+            disp = summary.copy()
+            for c in ['Current_Claims', 'BF_IBNR']:
+                disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp, width='stretch', hide_index=True)
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as w:
+                summary.to_excel(w, index=False, sheet_name='BF_Summary')
+                final_df.to_excel(w, index=False, sheet_name='BF_Detail')
+            output.seek(0)
+            sc = re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.xlsx", key="bf_dl")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    back_button('ibnr_menu',['Home','LIC','Fulfilment Cashflows','IBNR Methods'])
+
+
+def render_ulae_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>ULAE Calculator</h1><p>Paid-to-Paid method: ULAE = ratio × (0.5×OCR + IBNR)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1: client_name=st.text_input("Client","Client",key="ulae_cn").strip()
+    with c2: ulae_ratio=st.number_input("ULAE Ratio (%)",0.0,30.0,5.0,0.5,key="ulae_rt")/100
+    with c3: basis=st.selectbox("Allocation Basis",["Per Portfolio","Aggregated"],key="ulae_bs")
+    uploaded=st.file_uploader("Upload reserves file (LOB | OCR | IBNR)",type=["csv","xlsx","xls"],key="ulae_f")
+    if uploaded is None:
+        st.info("Upload file with LOB, OCR, and IBNR columns.")
+        back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows']); return
+    try:
+        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df.columns=df.columns.astype(str).str.strip()
+        st.dataframe(df.head(5),width='stretch')
+        cols=df.columns.tolist()
+        c1,c2,c3=st.columns(3)
+        with c1: lob_col=st.selectbox("LOB",cols,key="ulae_lob")
+        with c2: ocr_col=st.selectbox("OCR",cols,key="ulae_ocr")
+        with c3: ibnr_col=st.selectbox("IBNR",cols,key="ulae_ibnr")
+        prem_col=None
+        if basis=="Aggregated":
+            with st.columns(2)[0]: prem_col=st.selectbox("Premium (for aggregated split)",cols,key="ulae_prem")
+        if st.button("Calculate ULAE",key="ulae_run",width='stretch'):
+            df[ocr_col]=pd.to_numeric(df[ocr_col],errors='coerce').fillna(0)
+            df[ibnr_col]=pd.to_numeric(df[ibnr_col],errors='coerce').fillna(0)
+            df['ULAE_Base']=0.5*df[ocr_col]+df[ibnr_col]
+            if basis=="Aggregated" and prem_col:
+                df[prem_col]=pd.to_numeric(df[prem_col],errors='coerce').fillna(0)
+                tot_prem=df[prem_col].sum()
+                df['Pct']=df[prem_col]/tot_prem if tot_prem>0 else 1/len(df)
+                total_ulae=df['ULAE_Base'].sum()*ulae_ratio
+                df['ULAE']=total_ulae*df['Pct']
+            else:
+                df['ULAE']=df['ULAE_Base']*ulae_ratio
+            res=df[[lob_col,ocr_col,ibnr_col,'ULAE_Base','ULAE']].copy()
+            st.subheader("ULAE Results")
+            disp=res.copy()
+            for c in [ocr_col,ibnr_col,'ULAE_Base','ULAE']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
+            st.dataframe(disp,width='stretch',hide_index=True)
+            st.metric("Total ULAE",f"{df['ULAE'].sum():,.2f}")
+            output=BytesIO()
+            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='ULAE_Results')
+            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download ULAE Results",data=output,file_name=f"{sc}_ULAE.xlsx",key="ulae_dl")
+    except Exception as e: st.error(f"Error: {e}")
+    back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows'])
+
+def render_npr_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Reinsurance Non-Performance Risk (NPR)</h1><p>IFRS 17 Para 63(e) — NPR = PD × Reinsurer Share × Ceded LIC</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2=st.columns(2)
+    with c1: client_name=st.text_input("Client","Client",key="npr_cn").strip()
+    with c2: basis=st.selectbox("Share Basis",["Aggregation (overall share)","Per Portfolio"],key="npr_bs")
+    st.markdown("#### Reinsurer Data (Name | Credit_Rating | PD | Share columns)")
+    ri_file=st.file_uploader("Upload Reinsurer file",type=["csv","xlsx","xls"],key="npr_rf")
+    st.markdown("#### Ceded LIC Data (Portfolio | Ceded_IBNR | Ceded_OCR  OR  Portfolio | Total_Ceded_LIC)")
+    lic_file=st.file_uploader("Upload Ceded LIC file",type=["csv","xlsx","xls"],key="npr_lf")
+    if ri_file is None or lic_file is None:
+        st.info("Upload both Reinsurer and Ceded LIC files.")
+        back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows']); return
+    try:
+        ri_df=pd.read_csv(ri_file) if ri_file.name.endswith('.csv') else pd.read_excel(ri_file)
+        ri_df.columns=ri_df.columns.astype(str).str.strip()
+        lic_df=pd.read_csv(lic_file) if lic_file.name.endswith('.csv') else pd.read_excel(lic_file)
+        lic_df.columns=lic_df.columns.astype(str).str.strip()
+        st.dataframe(ri_df.head(3),width='stretch')
+        st.dataframe(lic_df.head(3),width='stretch')
+        rc=ri_df.columns.tolist(); lc=lic_df.columns.tolist()
+        c1,c2,c3=st.columns(3)
+        with c1: name_col=st.selectbox("Reinsurer Name",rc,key="npr_rn")
+        with c2: pd_col=st.selectbox("PD (decimal)",rc,key="npr_pd")
+        with c3: share_col=st.selectbox("Overall Share (decimal)",rc,key="npr_sh")
+        c1,c2,c3=st.columns(3)
+        with c1: port_col=st.selectbox("Portfolio",lc,key="npr_pc")
+        with c2: lic_fmt=st.selectbox("LIC Format",["Separate IBNR+OCR","Total LIC only"],key="npr_fmt")
+        if lic_fmt=="Separate IBNR+OCR":
+            with c3: ibnr_c=st.selectbox("Ceded IBNR",lc,key="npr_ibnr")
+            ocr_c=st.selectbox("Ceded OCR",lc,key="npr_ocr")
+        else:
+            with c3: total_c=st.selectbox("Total Ceded LIC",lc,key="npr_tot")
+        if st.button("Calculate NPR",key="npr_run",width='stretch'):
+            ri_df[pd_col]=pd.to_numeric(ri_df[pd_col],errors='coerce').fillna(0)
+            ri_df[share_col]=pd.to_numeric(ri_df[share_col],errors='coerce').fillna(0)
+            if lic_fmt=="Separate IBNR+OCR":
+                lic_df[ibnr_c]=pd.to_numeric(lic_df[ibnr_c],errors='coerce').fillna(0)
+                lic_df[ocr_c]=pd.to_numeric(lic_df[ocr_c],errors='coerce').fillna(0)
+                lic_df['Total_LIC']=lic_df[ibnr_c]+lic_df[ocr_c]
+            else:
+                lic_df['Total_LIC']=pd.to_numeric(lic_df[total_c],errors='coerce').fillna(0)
+            rows=[]
+            for _,ri in ri_df.iterrows():
+                for _,lic in lic_df.iterrows():
+                    npr=ri[pd_col]*ri[share_col]*lic['Total_LIC']
+                    rows.append({'Reinsurer':ri[name_col],'Portfolio':lic[port_col],'PD':ri[pd_col],'Share':ri[share_col],'Total_LIC':lic['Total_LIC'],'NPR':npr})
+            res=pd.DataFrame(rows)
+            by_port=res.groupby('Portfolio')['NPR'].sum().reset_index()
+            by_ri=res.groupby('Reinsurer')['NPR'].sum().reset_index()
+            st.subheader("NPR by Portfolio"); disp=by_port.copy(); disp['NPR']=disp['NPR'].apply(lambda x:f"{x:,.2f}"); st.dataframe(disp,width='stretch',hide_index=True)
+            st.subheader("NPR by Reinsurer"); disp2=by_ri.copy(); disp2['NPR']=disp2['NPR'].apply(lambda x:f"{x:,.2f}"); st.dataframe(disp2,width='stretch',hide_index=True)
+            st.metric("Total NPR",f"{res['NPR'].sum():,.2f}")
+            output=BytesIO()
+            with pd.ExcelWriter(output,engine='openpyxl') as w:
+                by_port.to_excel(w,index=False,sheet_name='NPR_by_Portfolio')
+                by_ri.to_excel(w,index=False,sheet_name='NPR_by_Reinsurer')
+                res.to_excel(w,index=False,sheet_name='NPR_Detail')
+            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download NPR Results",data=output,file_name=f"{sc}_NPR.xlsx",key="npr_dl")
+    except Exception as e: st.error(f"Error: {e}")
+    back_button('fulfilment_cashflows',['Home','LIC','Fulfilment Cashflows'])
+
+def render_mack_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Mack Chain Ladder — Risk Adjustment</h1><p>Distribution-free standard error of IBNR per Mack (1993). RA = z × σ(IBNR)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3=st.columns(3)
+    with c1: client_name=st.text_input("Client","Client",key="mck_cn").strip()
+    with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.9,75.0,1.0,key="mck_cl")/100
+    from scipy.stats import norm
+    z=norm.ppf(confidence)
+    with c3: st.info(f"z-score: {z:.3f}")
+    uploaded=st.file_uploader("Upload claims triangle (cumulative, CSV/Excel — rows=AY, cols=Dev)",type=["csv","xlsx","xls"],key="mck_f")
+    st.info("Expected format: first column = Accident Year label, remaining columns = cumulative claims by development period.")
+    if uploaded is None:
+        back_button('risk_adjustment',['Home','LIC','Risk Adjustment']); return
+    try:
+        raw=pd.read_csv(uploaded,index_col=0) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded,index_col=0)
+        raw.columns=raw.columns.astype(str).str.strip()
+        raw=raw.apply(pd.to_numeric,errors='coerce')
+        st.dataframe(raw,width='stretch')
+        n=len(raw); m=len(raw.columns)
+        C=raw.values.copy().astype(float)
+        # Volume-weighted factors
+        facs=[]
+        for j in range(m-1):
+            num=sum(C[i,j+1] for i in range(n-j-1) if not np.isnan(C[i,j+1]) and not np.isnan(C[i,j]))
+            den=sum(C[i,j]   for i in range(n-j-1) if not np.isnan(C[i,j+1]) and not np.isnan(C[i,j]))
+            facs.append(num/den if den>0 else 1.0)
+        # Mack sigma^2 per development period
+        sigmas=[]
+        for j in range(m-1):
+            pairs=[(C[i,j],C[i,j+1]) for i in range(n-j-1) if not np.isnan(C[i,j]) and not np.isnan(C[i,j+1]) and C[i,j]>0]
+            if len(pairs)>=2:
+                s2=sum(p[0]*(p[1]/p[0]-facs[j])**2 for p in pairs)/(len(pairs)-1)
+            elif len(pairs)==1:
+                s2=(pairs[0][0]*(pairs[0][1]/pairs[0][0]-facs[j])**2)
+            else:
+                s2=0.0
+            sigmas.append(max(s2,0.0))
+        # Tail sigma (Mack extrapolation)
+        if len(sigmas)>=2 and sigmas[-2]>0:
+            sigmas.append(min(sigmas[-1]**2/sigmas[-2],sigmas[-2],sigmas[-1]))
+        else:
+            sigmas.append(sigmas[-1] if sigmas else 0.0)
+        # Project
+        proj=C.copy()
+        for i in range(n):
+            lo=-1
+            for j in range(m-1,-1,-1):
+                if not np.isnan(C[i,j]): lo=j; break
+            if lo<0: continue
+            for j in range(lo,m-1):
+                if j<len(facs): proj[i,j+1]=proj[i,j]*facs[j] if not np.isnan(proj[i,j]) else np.nan
+        # Mack SE
+        rows=[]
+        for i in range(n):
+            lo=-1
+            for j in range(m-1,-1,-1):
+                if not np.isnan(C[i,j]): lo=j; break
+            if lo<0 or lo==m-1: continue
+            c_lo=C[i,lo]; ult=proj[i,m-1]; ibnr=max(ult-c_lo,0.0)
+            se2=0.0
+            for j in range(lo,m-1):
+                if j<len(sigmas) and j<len(facs):
+                    cdf_rem=np.prod(facs[j+1:]) if j+1<len(facs) else 1.0
+                    se2+=(sigmas[j]/facs[j]**2)*(cdf_rem**2 if cdf_rem else 1.0)/max(c_lo,1)
+            mack_se=np.sqrt(max(se2,0.0))*ult
+            ra=z*mack_se
+            rows.append({'AY':raw.index[i],'Current':c_lo,'Ultimate':ult,'IBNR':ibnr,'Mack_SE':mack_se,'RA':ra})
+        res=pd.DataFrame(rows)
+        st.subheader(f"Mack RA @ {confidence*100:.0f}% Confidence")
+        disp=res.copy()
+        for c in ['Current','Ultimate','IBNR','Mack_SE','RA']: disp[c]=disp[c].apply(lambda x:f"{x:,.2f}")
+        st.dataframe(disp,width='stretch',hide_index=True)
+        st.metric("Total IBNR",f"{res['IBNR'].sum():,.2f}"); st.metric("Total RA",f"{res['RA'].sum():,.2f}")
+        st.metric("Total LIC (IBNR+RA)",f"{res['IBNR'].sum()+res['RA'].sum():,.2f}")
+        output=BytesIO()
+        with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='Mack_RA')
+        output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+        st.download_button("⬇ Download Mack Results",data=output,file_name=f"{sc}_Mack_RA.xlsx",key="mck_dl")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
+
+def render_bootstrap_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>ODP Bootstrap — Risk Adjustment</h1><p>England & Verrall (1999) bootstrap with process variance (Gamma ODP). RA = Pctlₙ − Mean</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2,c3,c4=st.columns(4)
+    with c1: client_name=st.text_input("Client","Client",key="bts_cn").strip()
+    with c2: confidence=st.number_input("Confidence Level (%)",50.0,99.5,75.0,1.0,key="bts_cl")/100
+    with c3: n_iter=st.number_input("Iterations",100,10000,1000,100,key="bts_it")
+    with c4: add_pv=st.checkbox("Process Variance",value=True,key="bts_pv")
+    uploaded=st.file_uploader("Upload cumulative claims triangle (rows=AY, cols=Dev)",type=["csv","xlsx","xls"],key="bts_f")
+    st.info("Expected format: first column = Accident Year label, remaining = cumulative claims by development period.")
+    if uploaded is None:
+        back_button('risk_adjustment',['Home','LIC','Risk Adjustment']); return
+    try:
+        raw=pd.read_csv(uploaded,index_col=0) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded,index_col=0)
+        raw=raw.apply(pd.to_numeric,errors='coerce')
+        st.dataframe(raw,width='stretch')
+        n_ay,n_d=raw.shape; C=raw.values.copy().astype(float)
+        # Obs mask
+        obs=np.zeros((n_ay,n_d),dtype=bool)
+        for i in range(n_ay):
+            for j in range(n_d):
+                if i+j<n_ay and not np.isnan(C[i,j]): obs[i,j]=True
+        C_filled=np.where(np.isnan(C),0.0,C)
+        # Volume-weighted factors
+        def vw_facs(cm,om):
+            f=[]
+            for j in range(n_d-1):
+                num=den=0.0
+                for i in range(n_ay):
+                    if i+j+1<n_ay and om[i,j] and om[i,j+1]:
+                        if cm[i,j]>0: num+=cm[i,j+1]; den+=cm[i,j]
+                f.append(num/den if den>0 else 1.0)
+            return f
+        # Project
+        def project(wc,f):
+            p=wc.copy().astype(float)
+            for i in range(n_ay):
+                lo=-1
+                for j in range(n_d-1,-1,-1):
+                    if i+j<n_ay: lo=j; break
+                if lo<0: continue
+                for j in range(lo,n_d-1):
+                    if j<len(f): p[i,j+1]=p[i,j]*f[j] if p[i,j]>0 else 0.0
+            return p
+        facs=vw_facs(C_filled,obs); comp_det=project(C_filled,facs)
+        # Fitted incremental
+        fit_inc=comp_det.copy()
+        for i in range(n_ay):
+            for j in range(n_d-1,0,-1): fit_inc[i,j]=comp_det[i,j]-comp_det[i,j-1]
+        # Pearson residuals
+        resids=[]
+        for i in range(n_ay):
+            for j in range(n_d):
+                if i+j<n_ay and obs[i,j]:
+                    act=(C_filled[i,j]-C_filled[i,j-1]) if j>0 else C_filled[i,j]
+                    fit=fit_inc[i,j]; r=(act-fit)/np.sqrt(abs(fit)) if fit>0 else 0.0
+                    resids.append(r)
+        resids=np.array(resids); n_obs=len(resids)
+        phi=max(np.sum(resids**2)/max(n_obs-n_d+1,1),0.01)
+        if st.button("Run Bootstrap",key="bts_run",width='stretch'):
+            with st.spinner(f"Running {n_iter:,} iterations..."):
+                samples=[]
+                for _ in range(n_iter):
+                    samp=np.random.choice(resids,size=n_obs,replace=True)
+                    ps=fit_inc.copy().astype(float); idx=0
+                    for i in range(n_ay):
+                        for j in range(n_d):
+                            if i+j<n_ay and obs[i,j]:
+                                fv=fit_inc[i,j]; pv=fv+samp[idx]*np.sqrt(max(abs(fv),0.001))
+                                ps[i,j]=max(pv,0.0); idx+=1
+                    pc=np.cumsum(ps,axis=1)
+                    pf=vw_facs(pc,obs); pc2=project(pc,pf)
+                    if add_pv and phi>1e-10:
+                        pi=pc2.copy()
+                        for i in range(n_ay):
+                            for j in range(n_d-1,0,-1): pi[i,j]=pc2[i,j]-pc2[i,j-1]
+                        for i in range(n_ay):
+                            for j in range(n_d):
+                                if (i+j>=n_ay) or (not obs[i,j]):
+                                    mv=pi[i,j]
+                                    if not np.isnan(mv) and mv>0: pi[i,j]=max(np.random.gamma(mv/phi,phi),0.0)
+                                    else: pi[i,j]=0.0
+                        pc2=np.cumsum(pi,axis=1)
+                    total=0.0
+                    for i in range(n_ay):
+                        lo=-1
+                        for j in range(n_d-1,-1,-1):
+                            if i+j<n_ay and obs[i,j]: lo=j; break
+                        if lo>=0: total+=max(pc2[i,n_d-1]-pc[i,lo],0.0)
+                    samples.append(total)
+                arr=np.array(samples)
+                cl_ibnr=sum(max(comp_det[i,n_d-1]-C_filled[i,[j for j in range(n_d-1,-1,-1) if i+j<n_ay][0]],0.0) for i in range(n_ay) if any(i+j<n_ay for j in range(n_d)))
+                boot_mean=float(np.mean(arr)); pctl=float(np.percentile(arr,confidence*100)); ra=max(pctl-boot_mean,0.0)
+                st.subheader(f"Bootstrap Results @ {confidence*100:.0f}%")
+                c1,c2,c3,c4=st.columns(4)
+                with c1: st.metric("CL IBNR",f"{cl_ibnr:,.2f}")
+                with c2: st.metric("Bootstrap Mean",f"{boot_mean:,.2f}")
+                with c3: st.metric(f"{confidence*100:.0f}th Percentile",f"{pctl:,.2f}")
+                with c4: st.metric("Risk Adjustment (RA)",f"{ra:,.2f}")
+                st.metric("LIC (IBNR+RA)",f"{cl_ibnr+ra:,.2f}")
+                output=BytesIO()
+                res_df=pd.DataFrame({'Iteration':range(1,n_iter+1),'IBNR_Sample':arr})
+                with pd.ExcelWriter(output,engine='openpyxl') as w:
+                    res_df.to_excel(w,index=False,sheet_name='Bootstrap_Samples')
+                    pd.DataFrame({'Metric':['CL_IBNR','Boot_Mean',f'Pctl_{confidence*100:.0f}','RA'],'Value':[cl_ibnr,boot_mean,pctl,ra]}).to_excel(w,index=False,sheet_name='Summary')
+                output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+                st.download_button("⬇ Download Bootstrap Results",data=output,file_name=f"{sc}_Bootstrap_RA.xlsx",key="bts_dl")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    back_button('risk_adjustment',['Home','LIC','Risk Adjustment'])
+
+def render_loss_component():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Loss Component Calculator</h1><p>Onerous contract test per IFRS 17.57 — Combined Ratio method. Loss Component = Expected Premiums × max(0, CR − 1)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+    c1,c2=st.columns(2)
+    with c1: client_name=st.text_input("Client","Client",key="lc_cn").strip()
+    uploaded=st.file_uploader("Upload data (LOB | Gross_Written_Premiums | Gross_Attributable_Expenses | Gross_Commission_Paid | Gross_Paid_Claims | Gross_Opening_OCR | Gross_Closing_OCR | Gross_Opening_IBNR | Gross_Closing_IBNR | Gross_Opening_UPR | Gross_Closing_UPR | Gross_Risk_Adjustment)",type=["csv","xlsx","xls"],key="lc_f")
+    if uploaded is None:
+        st.info("Upload file with Line of Business and reserve/cashflow columns.")
+        back_button('lrc',['Home','Individual Calculators','LRC']); return
+    try:
+        df=pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df.columns=df.columns.astype(str).str.strip()
+        st.dataframe(df.head(3),width='stretch')
+        cols=df.columns.tolist()
+        REQUIRED=['Line_of_business','Gross_Written_Premiums','Gross_Attributable_Expenses','Gross_Commission_Paid','Gross_Paid_Claims','Gross_Opening_OCR','Gross_Closing_OCR','Gross_Opening_IBNR','Gross_Closing_IBNR','Gross_Opening_UPR','Gross_Closing_UPR','Gross_Risk_Adjustment']
+        mapping={}
+        st.markdown("**Map Columns:**")
+        for i in range(0,len(REQUIRED),3):
+            row_cols=st.columns(3)
+            for j in range(3):
+                idx=i+j
+                if idx<len(REQUIRED):
+                    field=REQUIRED[idx]
+                    with row_cols[j]:
+                        default=field if field in cols else (cols[idx] if idx<len(cols) else cols[0])
+                        default_idx=cols.index(default) if default in cols else 0
+                        mapping[field]=st.selectbox(field,cols,index=default_idx,key=f"lc_map_{field}")
+        if st.button("Calculate Loss Component",key="lc_run",width='stretch'):
+            dfw=df.rename(columns={v:k for k,v in mapping.items()}).copy()
+            for col in REQUIRED[1:]: dfw[col]=pd.to_numeric(dfw[col],errors='coerce').fillna(0)
+            dfw['Gross_Actual_Incurred_Claims']=(dfw['Gross_Paid_Claims']+dfw['Gross_Closing_IBNR']+dfw['Gross_Closing_OCR']-dfw['Gross_Opening_IBNR']-dfw['Gross_Opening_OCR'])
+            dfw['Gross_Earned_Premiums']=(dfw['Gross_Written_Premiums']+dfw['Gross_Opening_UPR']-dfw['Gross_Closing_UPR'])
+            res=dfw.groupby('Line_of_business').agg(
+                Total_Written_Premiums=('Gross_Written_Premiums','sum'),
+                Total_Earned_Premiums=('Gross_Earned_Premiums','sum'),
+                Total_Incurred_Claims=('Gross_Actual_Incurred_Claims','sum'),
+                Total_Commission=('Gross_Commission_Paid','sum'),
+                Total_Expenses=('Gross_Attributable_Expenses','sum'),
+                Total_RA=('Gross_Risk_Adjustment','sum'),
+                Closing_IBNR=('Gross_Closing_IBNR','sum'),
+                Closing_OCR=('Gross_Closing_OCR','sum'),
+                Closing_UPR=('Gross_Closing_UPR','sum'),
+            ).reset_index()
+            res['Loss_Ratio']=np.where(res['Total_Earned_Premiums']!=0,res['Total_Incurred_Claims']/res['Total_Earned_Premiums'],np.nan)
+            res['Commission_Ratio']=np.where(res['Total_Written_Premiums']!=0,res['Total_Commission']/res['Total_Written_Premiums'],np.nan)
+            res['Expense_Ratio']=np.where(res['Total_Written_Premiums']!=0,res['Total_Expenses']/res['Total_Written_Premiums'],np.nan)
+            risk_denom=res['Closing_IBNR']+res['Closing_OCR']
+            res['RA_Ratio']=np.where(risk_denom!=0,res['Total_RA']/risk_denom,np.nan)
+            res['Combined_Ratio']=res['Loss_Ratio'].fillna(0)+res['Commission_Ratio'].fillna(0)+res['Expense_Ratio'].fillna(0)+res['RA_Ratio'].fillna(0)
+            res['Loss_Component']=np.maximum(res['Combined_Ratio']-1,0)*res['Closing_UPR']
+            st.subheader("Loss Component Results")
+            disp=res.copy()
+            for c in ['Loss_Ratio','Commission_Ratio','Expense_Ratio','RA_Ratio','Combined_Ratio']:
+                disp[c]=disp[c].apply(lambda x:f"{x:.2%}" if pd.notna(x) else "N/A")
+            for c in ['Total_Written_Premiums','Total_Earned_Premiums','Total_Incurred_Claims','Total_Commission','Total_Expenses','Total_RA','Closing_UPR','Loss_Component']:
+                disp[c]=disp[c].apply(lambda x:f"{x:,.2f}" if pd.notna(x) else "N/A")
+            st.dataframe(disp,width='stretch',hide_index=True)
+            st.metric("Total Loss Component",f"{res['Loss_Component'].sum():,.2f}")
+            output=BytesIO()
+            with pd.ExcelWriter(output,engine='openpyxl') as w: res.to_excel(w,index=False,sheet_name='Loss_Component')
+            output.seek(0); sc=re.sub(r'[\/*?:"<>|]','',client_name).strip() or "Client"
+            st.download_button("⬇ Download Loss Component Results",data=output,file_name=f"{sc}_Loss_Component.xlsx",key="lc_dl")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        import traceback; st.write(traceback.format_exc())
+    back_button('lrc',['Home','Individual Calculators','LRC'])
+
+
+# =============================================================================
+#  FULL VALUATION (Main entry point with Mode Selector)
+# =============================================================================
+
+def render_full_valuation():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Complete valuation with Income Statement & Liability Rollforward per Line of Business</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-container">', unsafe_allow_html=True)
+
+    # ---- REPORT METADATA ----
+    st.markdown('<div class="section-container"><h3>Report Metadata</h3></div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: report_created_by = st.text_input("Created By", value="", key="fv_cb")
+    with c2: report_version = st.text_input("Version", value="3.9.29.3", key="fv_ver")
+    with c3: report_client = st.text_input("Client Name", value="", key="fv_client")
+    with c4: report_date = st.date_input("Valuation Date", value=date.today(), key="fv_vd")
+
+    run_id = f"DN{hash(str(datetime.now())):x}"[:40]
+    st.markdown(f"""
+    <div class="report-meta">
+    <table>
+    <tr><td><b>Creation:</b></td><td>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</td></tr>
+    <tr><td><b>Created By:</b></td><td>{report_created_by or '(not set)'}</td></tr>
+    <tr><td><b>Version:</b></td><td>{report_version}</td></tr>
+    <tr><td><b>Run ID:</b></td><td style="font-size:0.75rem;">{run_id}</td></tr>
+    </table>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.session_state.report_metadata = {
+        'created_by': report_created_by, 'version': report_version,
+        'client': report_client, 'valuation_date': str(report_date),
+        'run_id': run_id, 'creation_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+    # ---- VALUATION MODE SELECTOR ----
+    st.markdown('<div class="section-container"><h3>Valuation Mode</h3></div>', unsafe_allow_html=True)
+    valuation_mode = st.radio(
+        "Select Valuation Mode",
+        options=["Simplified UPR (Legacy)", "Full IFRS 17 LRC (PAA)"],
+        index=0,
+        key="fv_mode"
+    )
+
+    if valuation_mode == "Full IFRS 17 LRC (PAA)":
+        _render_full_ifrs17_lrc_branch(report_date, report_client)
+    else:
+        _render_simplified_upr_branch(report_date, report_client)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+    back_button('home', ['Home'])
+
+
+# =============================================================================
+#  BRANCH 1 — SIMPLIFIED UPR (LEGACY FULL VALUATION)
+# =============================================================================
+
+def _render_simplified_upr_branch(report_date, report_client):
+    val_date = pd.Timestamp(str(report_date))
+    from_dt = pd.Timestamp('2020-01-01')
+    to_dt = pd.Timestamp('2025-12-31')
+    n_periods_bcl = to_dt.year - from_dt.year + 1
+
+    # ---- SELECT RESERVES ----
+    st.markdown('<div class="section-container"><h3>Select Reserves & Methodologies</h3></div>', unsafe_allow_html=True)
+
+    st.markdown("**LRC — Liability for Remaining Coverage:**")
+    c1, c2 = st.columns(2)
+    with c1: calc_upr = st.checkbox("UPR (Unearned Premium Reserve)", value=True, key="fv_upr")
+    with c2: calc_loss_comp = st.checkbox("Loss Component (Onerous Contracts)", value=False, key="fv_lc")
+
+    st.markdown("**LIC — Fulfilment Cashflows:**")
+    c1, c2, c3 = st.columns(3)
+    with c1: calc_ocr = st.checkbox("OCR (Case Reserves)", value=True, key="fv_ocr")
+    with c2: calc_ibnr = st.checkbox("IBNR", value=True, key="fv_ibnr")
+    with c3:
+        if calc_ibnr:
+            ibnr_method = st.selectbox("IBNR Method", ["BCL","Percentage","Cape Cod","BF","ELR","ACPC"], key="fv_im")
+        else: ibnr_method = "BCL"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        calc_ulae = st.checkbox("ULAE", value=True, key="fv_ulae")
+        ulae_basis = st.selectbox("ULAE Basis", ["Per Portfolio","Aggregated"], key="fv_ub") if calc_ulae else "Per Portfolio"
+    with c2: calc_npr = st.checkbox("NPR (Reinsurance)", value=False, key="fv_npr")
+    with c3: pass
+
+    st.markdown("**LIC — Risk Adjustment:**")
+    c1, c2, c3 = st.columns(3)
+    with c1: calc_ra = st.checkbox("Risk Adjustment", value=True, key="fv_ra")
+    with c2:
+        if calc_ra:
+            ra_method = st.selectbox("RA Method", ["Bootstrap","Mack","VaR","Cost of Capital"], key="fv_rm")
+            ra_cl = st.number_input("Confidence Level (%)", 50.0, 99.5, 90.0, 5.0, key="fv_rc")/100
+        else: ra_method = "Bootstrap"; ra_cl = 0.90
+    with c3:
+        ra_iters = st.number_input("Bootstrap Iterations", 100, 10000, 1000, 100, key="fv_ri") if (calc_ra and ra_method=="Bootstrap") else 1000
+
+    selected = []
+    if calc_upr: selected.append("UPR")
+    if calc_loss_comp: selected.append("Loss Component")
+    if calc_ocr: selected.append("OCR")
+    if calc_ibnr: selected.append(f"IBNR({ibnr_method})")
+    if calc_ulae: selected.append(f"ULAE({ulae_basis})")
+    if calc_npr: selected.append("NPR")
+    if calc_ra: selected.append(f"RA({ra_method}@{ra_cl*100:.0f}%)")
+    st.info(f"Selected: {', '.join(selected) if selected else 'None'}")
+
+    # ---- PARAMETERS ----
+    st.markdown('<div class="section-container"><h3>Parameters</h3></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if calc_ulae: ulae_ratio = st.number_input("ULAE Ratio (%)", 0.0, 20.0, 5.0, 0.5, key="fv_ur")/100
+        else: ulae_ratio = 0.05
+    with c2:
+        if calc_ibnr: ibnr_grain = st.selectbox("IBNR Grain", ["Yearly","Half-Yearly","Quarterly","Monthly"], key="fv_ig")
+        else: ibnr_grain = "Yearly"
+    with c3:
+        if calc_upr: upr_method = st.selectbox("UPR Method", ["365th","24th","8th"], key="fv_um")
+        else: upr_method = "365th"
+
+    # ---- DATA FILES ----
+    st.markdown('<div class="section-container"><h3>Upload Data Files & Map Columns</h3></div>', unsafe_allow_html=True)
+
+    upr_data = None; ocr_data = None; claims_data = None
+    apportionment_data = None; cashflow_data = None; opening_data = None
+    premium_data = None; elr_dict = {}
+
+    if calc_upr:
+        st.markdown("#### UPR Data")
+        upr_file = st.file_uploader("Upload UPR file", type=["csv","xlsx","xls"], key="fv_upr_f")
+        if upr_file is not None:
+            try:
+                upr_df = pd.read_csv(upr_file) if upr_file.name.endswith('.csv') else pd.read_excel(upr_file)
+                upr_df.columns = upr_df.columns.astype(str).str.strip()
+                st.dataframe(upr_df.head(3), width='stretch')
+                upr_map = map_columns(upr_df, ['Start_Date','End_Date','Line_of_Business','Gross_Written_Premium'], 'UPR')
+                upr_data = upr_df.rename(columns=upr_map)
+                st.success("UPR columns mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    if calc_ocr:
+        st.markdown("#### OCR Data")
+        ocr_file = st.file_uploader("Upload OCR file", type=["csv","xlsx","xls"], key="fv_ocr_f")
+        if ocr_file is not None:
+            try:
+                ocr_df = pd.read_csv(ocr_file) if ocr_file.name.endswith('.csv') else pd.read_excel(ocr_file)
+                ocr_df.columns = ocr_df.columns.astype(str).str.strip()
+                st.dataframe(ocr_df.head(3), width='stretch')
+                ocr_map = map_columns(ocr_df, ['Line_of_Business','Case_Reserve'], 'OCR')
+                ocr_data = ocr_df.rename(columns=ocr_map)
+                st.success("OCR columns mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    if calc_ibnr or calc_ra:
+        st.markdown("#### Claims Triangle Data")
+        claims_file = st.file_uploader("Upload Claims file", type=["csv","xlsx","xls"], key="fv_cl_f")
+        if claims_file is not None:
+            try:
+                cl_df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
+                cl_df.columns = cl_df.columns.astype(str).str.strip()
+                st.dataframe(cl_df.head(3), width='stretch')
+                cl_map = map_columns(cl_df, ['Loss_Date','Report_Date','Claim_Amount','Line_of_Business'], 'Claims')
+                claims_data = cl_df.rename(columns=cl_map)
+                st.success("Claims columns mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    if calc_ibnr and ibnr_method in ["Cape Cod","BF"]:
+        st.markdown("#### Premium Data (for IBNR)")
+        prem_file = st.file_uploader("Upload Premium file", type=["csv","xlsx","xls"], key="fv_pr_f")
+        if prem_file is not None:
+            try:
+                prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+                prem_df.columns = prem_df.columns.astype(str).str.strip()
+                st.dataframe(prem_df.head(3), width='stretch')
+                premium_data = prem_df
+                st.success("Premium data loaded.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    if calc_ibnr and ibnr_method == "BF":
+        st.markdown("#### ELR per Portfolio")
+        portfolios_tmp = ["Motor","Property","Health","Engineering","Liability"]
+        ec = st.columns(min(3, len(portfolios_tmp)))
+        for i, p in enumerate(portfolios_tmp):
+            with ec[i%3]: elr_dict[p] = st.number_input(f"ELR {p} %", 0.0, 200.0, 70.0, 1.0, key=f"fv_elr_{p}")/100
+
+    if calc_ulae:
+        st.markdown("#### ULAE Apportionment Key")
+        app_file = st.file_uploader("Upload Apportionment file", type=["csv","xlsx","xls"], key="fv_ap_f")
+        if app_file is not None:
+            try:
+                app_df = pd.read_csv(app_file) if app_file.name.endswith('.csv') else pd.read_excel(app_file)
+                app_df.columns = app_df.columns.astype(str).str.strip()
+                st.dataframe(app_df.head(3), width='stretch')
+                app_map = map_columns(app_df, ['Portfolio','Premiums_Received'], 'Apportionment')
+                apportionment_data = app_df.rename(columns=app_map)
+                st.success("Apportionment columns mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    st.markdown("#### Cash Flow Data")
+    cf_file = st.file_uploader("Upload Cash Flow file", type=["csv","xlsx","xls"], key="fv_cf")
+    if cf_file is not None:
+        try:
+            cf_df = pd.read_csv(cf_file) if cf_file.name.endswith('.csv') else pd.read_excel(cf_file)
+            cf_df.columns = cf_df.columns.astype(str).str.strip()
+            st.dataframe(cf_df.head(3), width='stretch')
+            cf_map = map_columns(cf_df, ['Portfolio','Premiums_Received','Paid_Claims_Gross','Acquisition_Costs','Maintenance_Expenses'], 'CashFlow')
+            cashflow_data = cf_df.rename(columns=cf_map)
+            st.success("Cash flow columns mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    st.markdown("#### Opening Balances")
+    op_file = st.file_uploader("Upload Opening Balances file", type=["csv","xlsx","xls"], key="fv_ob")
+    if op_file is not None:
+        try:
+            op_df = pd.read_csv(op_file) if op_file.name.endswith('.csv') else pd.read_excel(op_file)
+            op_df.columns = op_df.columns.astype(str).str.strip()
+            st.dataframe(op_df.head(3), width='stretch')
+            op_map = map_columns(op_df, ['Portfolio','Opening_LRC_UPR','Opening_LIC_OCR','Opening_LIC_IBNR','Opening_LIC_ULAE','Opening_LIC_RA'], 'OpeningBal')
+            opening_data = op_df.rename(columns=op_map)
+            st.success("Opening balance columns mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # ---- CALCULATE ----
+    if st.button("Run Full IFRS 17 Valuation", key="fv_run", width='stretch'):
+        if not selected:
+            st.warning("Select at least one reserve.")
+        else:
+            with st.spinner("Running full IFRS 17 valuation..."):
+                results = {}
+                val_date = pd.Timestamp(str(report_date))
+                from_dt = pd.Timestamp('2020-01-01')
+                to_dt = pd.Timestamp('2025-12-31')
+                n_periods_bcl = to_dt.year - from_dt.year + 1
+
+                portfolios = []
+                if upr_data is not None and 'Line_of_Business' in upr_data.columns:
+                    portfolios = sorted(upr_data['Line_of_Business'].dropna().unique().tolist())
+                elif ocr_data is not None and 'Line_of_Business' in ocr_data.columns:
+                    portfolios = sorted(ocr_data['Line_of_Business'].dropna().unique().tolist())
+                elif claims_data is not None and 'Line_of_Business' in claims_data.columns:
+                    portfolios = sorted(claims_data['Line_of_Business'].dropna().unique().tolist())
+                else:
+                    portfolios = ["Motor","Property","Health","Engineering","Liability"]
+
+                st.info(f"Portfolios: {', '.join(portfolios)}")
+
+                # ---- UPR ----
+                if calc_upr and upr_data is not None:
+                    df_upr = upr_data.copy()
+                    df_upr['Start_Date'] = pd.to_datetime(df_upr['Start_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_upr['End_Date'] = pd.to_datetime(df_upr['End_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_upr['Premium'] = pd.to_numeric(df_upr['Gross_Written_Premium'], errors='coerce')
+                    df_upr = df_upr.dropna(subset=['Start_Date','End_Date'])
+                    df_upr = df_upr[df_upr['End_Date'] > df_upr['Start_Date']]
+                    df_upr['Duration'] = (df_upr['End_Date'] - df_upr['Start_Date']).dt.days
+                    df_upr['Remaining'] = (df_upr['End_Date'] - val_date).dt.days
+                    if upr_method == "365th":
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
+                            np.clip(df_upr['Remaining'] / df_upr['Duration'], 0, 1)))
+                    elif upr_method == "24th":
+                        iv = 365.25/24
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
+                            np.clip((df_upr['End_Date']-val_date).dt.days/iv / (df_upr['Duration']/iv), 0, 1)))
+                    else:
+                        iv = 365.25/8
+                        df_upr['Unearned'] = np.where(val_date < df_upr['Start_Date'], 1,
+                            np.where(val_date > df_upr['End_Date'], 0,
+                            np.clip((df_upr['End_Date']-val_date).dt.days/iv / (df_upr['Duration']/iv), 0, 1)))
+                    df_upr['UPR'] = df_upr['Unearned'] * df_upr['Premium']
+                    upr_result = df_upr.groupby('Line_of_Business')['UPR'].sum().reset_index()
+                    upr_result.columns = ['Portfolio','Closing_UPR']
+                    results['UPR'] = upr_result
+                    st.success(f"UPR ({upr_method}): {upr_result['Closing_UPR'].sum():,.2f}")
+
+                # ---- OCR ----
+                if calc_ocr and ocr_data is not None:
+                    df_ocr = ocr_data.copy()
+                    df_ocr['Reserve'] = pd.to_numeric(df_ocr['Case_Reserve'], errors='coerce')
+                    ocr_result = df_ocr.groupby('Line_of_Business')['Reserve'].sum().reset_index()
+                    ocr_result.columns = ['Portfolio','Closing_OCR']
+                    results['OCR'] = ocr_result
+                    st.success(f"OCR: {ocr_result['Closing_OCR'].sum():,.2f}")
+
+                # ---- IBNR ----
+                if calc_ibnr and claims_data is not None:
+                    df_cl = claims_data.copy()
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
+                    df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
+                    df_cl = _date_filter(df_cl, 'Loss_Date', from_dt, to_dt)
+
+                    ibnr_rows = []
+                    for lob in portfolios:
+                        lob_data = df_cl[df_cl['Line_of_Business']==lob].copy()
+                        if len(lob_data)==0:
+                            ibnr_rows.append({'Portfolio':lob,'Closing_IBNR':0}); continue
+                        lob_data['AP'] = lob_data['Loss_Date'].apply(lambda d: d.year - from_dt.year)
+                        lob_data['DP'] = lob_data.apply(lambda r: max(0, min(r['Report_Date'].year - r['Loss_Date'].year, n_periods_bcl-1)), axis=1)
+                        pivot = lob_data.pivot_table(index='AP', columns='DP', values='Amount', aggfunc='sum')
+                        for ap in range(n_periods_bcl):
+                            if ap not in pivot.index: pivot.loc[ap] = np.nan
+                        for dp in range(n_periods_bcl):
+                            if dp not in pivot.columns: pivot[dp] = np.nan
+                        inc = pivot.sort_index()[sorted(pivot.columns)].astype(float)
+                        for ap in inc.index:
+                            for dp in inc.columns:
+                                if ap+dp >= n_periods_bcl: inc.loc[ap, dp] = np.nan
+                        cum = inc.copy()
+                        for ap in inc.index:
+                            has_obs = any(pd.notna(inc.loc[ap, dp]) for dp in inc.columns if ap+dp<n_periods_bcl)
+                            if not has_obs: continue
+                            running = 0.0
+                            for dp in sorted(inc.columns):
+                                if ap+dp<n_periods_bcl:
+                                    v = inc.loc[ap, dp]; running += v if pd.notna(v) else 0.0; cum.loc[ap, dp] = running
+                        wc = cum.fillna(0)
+
+                        if ibnr_method == "Percentage":
+                            total_paid = wc.sum().sum()
+                            ibnr_total = total_paid * 0.10
+                        elif ibnr_method == "BCL":
+                            n_ay, n_dp = wc.shape
+                            factors = []
+                            for j in range(n_dp-1):
+                                num, den = 0.0, 0.0
+                                for i in range(n_ay):
+                                    if i+j+1<n_ay:
+                                        c = wc.iloc[i,j]; n = wc.iloc[i,j+1]
+                                        if c>0: num+=n; den+=c
+                                factors.append(num/den if den>0 else 1.0)
+                            completed = wc.copy().astype(float)
+                            for i in range(n_ay):
+                                last_obs = -1
+                                for j in range(n_dp-1,-1,-1):
+                                    if i+j<n_ay: last_obs=j; break
+                                if last_obs<0: continue
+                                for j in range(last_obs, n_dp-1):
+                                    if j<len(factors):
+                                        prev = completed.iloc[i,j]; completed.iloc[i,j+1] = prev*factors[j] if prev>0 else 0.0
+                            ibnr_total = 0.0
+                            for i in range(n_ay):
+                                last_obs = -1
+                                for j in range(n_dp-1,-1,-1):
+                                    if i+j<n_ay: last_obs=j; break
+                                if last_obs>=0:
+                                    cur = wc.iloc[i,last_obs]; ult = completed.iloc[i,n_dp-1]
+                                    ibnr_total += max(ult-cur, 0.0)
+                        elif ibnr_method == "BF":
+                            n_ay, n_dp = wc.shape
+                            factors = []
+                            for j in range(n_dp-1):
+                                num, den = 0.0, 0.0
+                                for i in range(n_ay):
+                                    if i+j+1<n_ay:
+                                        c = wc.iloc[i,j]; n = wc.iloc[i,j+1]
+                                        if c>0: num+=n; den+=c
+                                factors.append(num/den if den>0 else 1.0)
+                            cdfs = []; running = 1.0
+                            for f in reversed(factors): running*=f; cdfs.insert(0, running)
+                            pct_unpaid = [1-(1/c) if c>0 else 0 for c in cdfs]
+                            gelr = elr_dict.get(lob, 0.7)
+                            prems = []
+                            if premium_data is not None and lob in premium_data.columns:
+                                prems = pd.to_numeric(premium_data[lob], errors='coerce').fillna(0).tolist()
+                            else:
+                                prems = [wc.iloc[i,0]*2 for i in range(n_ay)]
+                            ibnr_total = 0.0
+                            for i in range(n_ay):
+                                last_obs=-1
+                                for j in range(n_dp-1,-1,-1):
+                                    if i+j<n_ay: last_obs=j; break
+                                if last_obs>=0 and i<len(prems) and last_obs<len(pct_unpaid):
+                                    ibnr_total += prems[i]*gelr*pct_unpaid[last_obs]
+                        else:
+                            ibnr_total = 0
+                        ibnr_rows.append({'Portfolio':lob,'Closing_IBNR':ibnr_total})
+                    ibnr_result = pd.DataFrame(ibnr_rows)
+                    results['IBNR'] = ibnr_result
+                    st.success(f"IBNR ({ibnr_method}): {ibnr_result['Closing_IBNR'].sum():,.2f}")
+
+                # ---- ULAE ----
+                if calc_ulae and 'OCR' in results and 'IBNR' in results:
+                    reserves_df = results['OCR'].merge(results['IBNR'], on='Portfolio', how='outer').fillna(0)
+                    reserves_df['ULAE_Base'] = 0.5 * reserves_df['Closing_OCR'] + reserves_df['Closing_IBNR']
+                    if ulae_basis == "Aggregated" and apportionment_data is not None:
+                        app_df = apportionment_data.copy()
+                        app_df['Amount'] = pd.to_numeric(app_df['Premiums_Received'], errors='coerce')
+                        total_amt = app_df['Amount'].sum()
+                        app_df['Pct'] = app_df['Amount']/total_amt if total_amt>0 else 0
+                        total_ulae = reserves_df['ULAE_Base'].sum() * ulae_ratio
+                        reserves_df = reserves_df.merge(app_df[['Portfolio','Pct']], on='Portfolio', how='left')
+                        reserves_df['Pct'] = reserves_df['Pct'].fillna(1.0/len(reserves_df))
+                        reserves_df['Closing_ULAE'] = total_ulae * reserves_df['Pct']
+                    else:
+                        reserves_df['Closing_ULAE'] = reserves_df['ULAE_Base'] * ulae_ratio
+                    results['ULAE'] = reserves_df[['Portfolio','Closing_ULAE']]
+                    st.success(f"ULAE ({ulae_basis}): {reserves_df['Closing_ULAE'].sum():,.2f}")
+
+                # ---- RA (Bootstrap) ----
+                if calc_ra and ra_method == "Bootstrap" and claims_data is not None:
+                    df_cl = claims_data.copy()
+                    df_cl['Loss_Date'] = pd.to_datetime(df_cl['Loss_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Report_Date'] = pd.to_datetime(df_cl['Report_Date'], errors='coerce').astype('datetime64[ns]')
+                    df_cl['Amount'] = pd.to_numeric(df_cl['Claim_Amount'], errors='coerce')
+                    df_cl = df_cl.dropna(subset=['Loss_Date','Report_Date'])
+                    df_cl = _date_filter(df_cl, 'Loss_Date', from_dt, to_dt)
+                    ra_rows = []
+                    for lob in portfolios:
+                        lob_data = df_cl[df_cl['Line_of_Business']==lob].copy()
+                        if len(lob_data)==0: ra_rows.append({'Portfolio':lob,'Closing_RA':0}); continue
+                        lob_data['AP'] = lob_data['Loss_Date'].apply(lambda d: d.year - from_dt.year)
+                        lob_data['DP'] = lob_data.apply(lambda r: max(0, min(r['Report_Date'].year - r['Loss_Date'].year, n_periods_bcl-1)), axis=1)
+                        pivot = lob_data.pivot_table(index='AP', columns='DP', values='Amount', aggfunc='sum')
+                        for ap in range(n_periods_bcl):
+                            if ap not in pivot.index: pivot.loc[ap] = np.nan
+                        for dp in range(n_periods_bcl):
+                            if dp not in pivot.columns: pivot[dp] = np.nan
+                        inc = pivot.sort_index()[sorted(pivot.columns)].astype(float)
+                        obs_mask = pd.DataFrame(False, index=inc.index, columns=inc.columns)
+                        for ap in inc.index:
+                            for dp in inc.columns:
+                                if ap+dp < n_periods_bcl: obs_mask.loc[ap, dp] = pd.notna(inc.loc[ap, dp])
+                        for ap in inc.index:
+                            for dp in inc.columns:
+                                if ap+dp >= n_periods_bcl: inc.loc[ap, dp] = np.nan
+                        cum = inc.copy()
+                        for ap in inc.index:
+                            has_obs = any(pd.notna(inc.loc[ap, dp]) for dp in inc.columns if ap+dp<n_periods_bcl)
+                            if not has_obs: continue
+                            running = 0.0
+                            for dp in sorted(inc.columns):
+                                if ap+dp<n_periods_bcl:
+                                    v = inc.loc[ap, dp]; running += v if pd.notna(v) else 0.0; cum.loc[ap, dp] = running
+                        wc = cum.fillna(0)
+                        n_ay, n_dp = wc.shape
+                        factors = []
+                        for j in range(n_dp-1):
+                            num, den = 0.0, 0.0
+                            for i in range(n_ay):
+                                if i+j+1<n_ay:
+                                    c = wc.iloc[i,j]; n = wc.iloc[i,j+1]
+                                    if c>0: num+=n; den+=c
+                            factors.append(num/den if den>0 else 1.0)
+                        completed_det = wc.copy().astype(float)
+                        for i in range(n_ay):
+                            last_obs=-1
+                            for j in range(n_dp-1,-1,-1):
+                                if i+j<n_ay: last_obs=j; break
+                            if last_obs<0: continue
+                            for j in range(last_obs,n_dp-1):
+                                if j<len(factors):
+                                    prev=completed_det.iloc[i,j]; completed_det.iloc[i,j+1]=prev*factors[j] if prev>0 else 0.0
+                        fitted_inc = completed_det.copy()
+                        for i in range(n_ay):
+                            for j in range(n_dp-1,0,-1): fitted_inc.iloc[i,j] = completed_det.iloc[i,j] - completed_det.iloc[i,j-1]
+                        residuals_list = []
+                        for i in range(n_ay):
+                            for j in range(n_dp):
+                                if i+j<n_ay and obs_mask.iloc[i,j]:
+                                    actual = (wc.iloc[i,j]-wc.iloc[i,j-1]) if j>0 else wc.iloc[i,j]
+                                    fitted = fitted_inc.iloc[i,j]
+                                    resid = (actual-fitted)/np.sqrt(abs(fitted)) if fitted>0 else 0.0
+                                    residuals_list.append(resid)
+                        residuals = np.array(residuals_list)
+                        n_obs = len(residuals); phi = max(np.sum(residuals**2)/max(n_obs-n_dp+1,1), 0.01)
+                        ibnr_samples = []
+                        for iteration in range(ra_iters):
+                            sampled = np.random.choice(residuals, size=n_obs, replace=True)
+                            pseudo_inc = fitted_inc.copy().astype(float); idx = 0
+                            for i in range(n_ay):
+                                for j in range(n_dp):
+                                    if i+j<n_ay and obs_mask.iloc[i,j]:
+                                        fv = fitted_inc.iloc[i,j]
+                                        pv = fv + sampled[idx]*np.sqrt(max(abs(fv),0.001))
+                                        pseudo_inc.iloc[i,j] = max(pv,0.0); idx += 1
+                            pseudo_cum = pseudo_inc.cumsum(axis=1)
+                            pf = []
+                            for j in range(n_dp-1):
+                                num, den = 0.0, 0.0
+                                for i in range(n_ay):
+                                    if i+j+1<n_ay:
+                                        c = pseudo_cum.iloc[i,j]; n = pseudo_cum.iloc[i,j+1]
+                                        if c>0: num+=n; den+=c
+                                pf.append(num/den if den>0 else 1.0)
+                            pc = pseudo_cum.copy().astype(float)
+                            for i in range(n_ay):
+                                last_obs=-1
+                                for j in range(n_dp-1,-1,-1):
+                                    if i+j<n_ay: last_obs=j; break
+                                if last_obs<0: continue
+                                for j in range(last_obs,n_dp-1):
+                                    if j<len(pf):
+                                        prev=pc.iloc[i,j]; pc.iloc[i,j+1]=prev*pf[j] if prev>0 else 0.0
+                            if phi>1e-10:
+                                proc_inc = pc.copy()
+                                for i in range(n_ay):
+                                    for j in range(n_dp-1,0,-1): proc_inc.iloc[i,j] = pc.iloc[i,j] - pc.iloc[i,j-1]
+                                for i in range(n_ay):
+                                    for j in range(n_dp):
+                                        is_future = (i+j>=n_ay) or (not obs_mask.iloc[i,j])
+                                        if is_future:
+                                            mv = proc_inc.iloc[i,j]
+                                            if pd.notna(mv) and mv>0: proc_inc.iloc[i,j] = max(np.random.gamma(mv/phi, phi), 0.0)
+                                            else: proc_inc.iloc[i,j] = 0.0
+                                pc = proc_inc.copy()
+                                for i in range(n_ay):
+                                    running=0.0
+                                    for j in range(n_dp):
+                                        v=proc_inc.iloc[i,j]; running+=v if pd.notna(v) and v>0 else 0.0; pc.iloc[i,j]=running
+                            ibnr_val = 0.0
+                            for i in range(n_ay):
+                                last_obs=-1
+                                for j in range(n_dp-1,-1,-1):
+                                    if i+j<n_ay and obs_mask.iloc[i,j]: last_obs=j; break
+                                if last_obs>=0:
+                                    cur = pseudo_cum.iloc[i,last_obs]; ult = pc.iloc[i,n_dp-1]
+                                    ibnr_val += max(ult-cur,0.0)
+                            ibnr_samples.append(ibnr_val)
+                        ibnr_arr = np.array(ibnr_samples)
+                        cl_ibnr = 0.0
+                        for i in range(n_ay):
+                            last_obs=-1
+                            for j in range(n_dp-1,-1,-1):
+                                if i+j<n_ay: last_obs=j; break
+                            if last_obs>=0:
+                                cur=wc.iloc[i,last_obs]; ult=completed_det.iloc[i,n_dp-1]
+                                cl_ibnr += max(ult-cur,0.0)
+                        ra_90 = max(np.percentile(ibnr_arr, 90) - cl_ibnr, 0.0)
+                        ra_rows.append({'Portfolio':lob,'Closing_RA':ra_90})
+                    ra_result = pd.DataFrame(ra_rows)
+                    results['RA'] = ra_result
+                    st.success(f"RA (Bootstrap @{ra_cl*100:.0f}%): {ra_result['Closing_RA'].sum():,.2f}")
+
+                # ---- RESULTS DISPLAY ----
+                st.markdown("---")
+                st.subheader("Valuation Results")
+
+                closing_reserves = {}
+                for p in portfolios:
+                    closing_reserves[p] = {
+                        'UPR': results['UPR'][results['UPR']['Portfolio']==p]['Closing_UPR'].sum() if 'UPR' in results else 0,
+                        'OCR': results['OCR'][results['OCR']['Portfolio']==p]['Closing_OCR'].sum() if 'OCR' in results else 0,
+                        'IBNR': results['IBNR'][results['IBNR']['Portfolio']==p]['Closing_IBNR'].sum() if 'IBNR' in results else 0,
+                        'ULAE': results['ULAE'][results['ULAE']['Portfolio']==p]['Closing_ULAE'].sum() if 'ULAE' in results else 0,
+                        'RA': results['RA'][results['RA']['Portfolio']==p]['Closing_RA'].sum() if 'RA' in results else 0,
+                    }
+
+                op_reserves = {}
+                if opening_data is not None:
+                    for _, row in opening_data.iterrows():
+                        p = str(row['Portfolio'])
+                        op_reserves[p] = {
+                            'UPR': abs(pd.to_numeric(row.get('Opening_LRC_UPR',0), errors='coerce') or 0),
+                            'OCR': pd.to_numeric(row.get('Opening_LIC_OCR',0), errors='coerce') or 0,
+                            'IBNR': pd.to_numeric(row.get('Opening_LIC_IBNR',0), errors='coerce') or 0,
+                            'ULAE': pd.to_numeric(row.get('Opening_LIC_ULAE',0), errors='coerce') or 0,
+                            'RA': pd.to_numeric(row.get('Opening_LIC_RA',0), errors='coerce') or 0,
+                        }
+
+                cf_reserves = {}
+                if cashflow_data is not None:
+                    for _, row in cashflow_data.iterrows():
+                        p = str(row['Portfolio'])
+                        cf_reserves[p] = {
+                            'Premiums_Received': pd.to_numeric(row.get('Premiums_Received',0), errors='coerce') or 0,
+                            'Paid_Claims': pd.to_numeric(row.get('Paid_Claims_Gross',0), errors='coerce') or 0,
+                            'Acquisition_Costs': pd.to_numeric(row.get('Acquisition_Costs',0), errors='coerce') or 0,
+                            'Maintenance_Expenses': pd.to_numeric(row.get('Maintenance_Expenses',0), errors='coerce') or 0,
+                        }
+
+                st.subheader("Liability Summary by Portfolio")
+                summary_rows = []
+                for p in portfolios:
+                    cl = closing_reserves.get(p, {})
+                    row = {'Portfolio': p}
+                    row['UPR (LRC)'] = cl.get('UPR', 0)
+                    row['OCR (LIC)'] = cl.get('OCR', 0)
+                    row['IBNR (LIC)'] = cl.get('IBNR', 0)
+                    row['ULAE (LIC)'] = cl.get('ULAE', 0)
+                    row['RA (LIC)'] = cl.get('RA', 0)
+                    row['Total LRC'] = row['UPR (LRC)']
+                    row['Total LIC'] = row['OCR (LIC)'] + row['IBNR (LIC)'] + row['ULAE (LIC)'] + row['RA (LIC)']
+                    row['ICL'] = row['Total LRC'] + row['Total LIC']
+                    summary_rows.append(row)
+                total_row = {'Portfolio': 'TOTAL'}
+                for key in summary_rows[0].keys():
+                    if key != 'Portfolio': total_row[key] = sum(r.get(key, 0) for r in summary_rows)
+                summary_rows.append(total_row)
+                summary_df = pd.DataFrame(summary_rows)
+                disp_summary = summary_df.copy()
+                for c in disp_summary.columns:
+                    if c != 'Portfolio': disp_summary[c] = disp_summary[c].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "-")
+                st.dataframe(disp_summary, width='stretch', hide_index=True)
+
+                ins_rev = {}
+                for p in portfolios:
+                    op_upr = op_reserves.get(p, {}).get('UPR', 0)
+                    cl_upr = closing_reserves.get(p, {}).get('UPR', 0)
+                    prem_rec = cf_reserves.get(p, {}).get('Premiums_Received', 0)
+                    ins_rev[p] = op_upr + prem_rec - cl_upr
+
+                st.subheader("Liability Rollforward — by Line of Business")
+                for p in portfolios:
+                    op = op_reserves.get(p, {}); cl = closing_reserves.get(p, {}); cf = cf_reserves.get(p, {})
+                    op_upr=op.get('UPR',0); cl_upr=cl.get('UPR',0)
+                    op_ocr=op.get('OCR',0); cl_ocr=cl.get('OCR',0)
+                    op_ibnr=op.get('IBNR',0); cl_ibnr=cl.get('IBNR',0)
+                    op_ulae=op.get('ULAE',0); cl_ulae=cl.get('ULAE',0)
+                    op_ra=op.get('RA',0); cl_ra=cl.get('RA',0)
+                    prem_rec=cf.get('Premiums_Received',0); paid=cf.get('Paid_Claims',0)
+                    acq=cf.get('Acquisition_Costs',0); maint=cf.get('Maintenance_Expenses',0)
+                    ir=ins_rev.get(p,0)
+                    incurred=paid+cl_ocr+cl_ibnr-op_ocr-op_ibnr
+                    op_icf=op_ocr+op_ibnr+op_ulae; cl_icf=cl_ocr+cl_ibnr+cl_ulae
+                    op_icl=op_upr+op_icf+op_ra; cl_icl=cl_upr+cl_icf+cl_ra
+                    st.markdown(f"**{p}**")
+                    roll_data = {
+                        "Line Item": ["Opening Balance","Premiums Received","Insurance Revenue","Incurred Claims","Paid Claims","Acquisition Costs","ULAE","Maintenance Expenses","Change in RA","Closing Balance"],
+                        "LRC (UPR)": [f"{op_upr:,.2f}",f"{prem_rec:,.2f}",f"{-ir:,.2f}","-","-","-","-","-","-",f"{cl_upr:,.2f}"],
+                        "LIC (FCF)": [f"{op_icf:,.2f}","-","-",f"{incurred:,.2f}",f"{-paid:,.2f}","-",f"{cl_ulae:,.2f}",f"{-maint:,.2f}","-",f"{cl_icf:,.2f}"],
+                        "LIC (RA)": [f"{op_ra:,.2f}","-","-","-","-","-","-","-",f"{cl_ra-op_ra:,.2f}",f"{cl_ra:,.2f}"],
+                        "ICL": [f"{op_icl:,.2f}",f"{prem_rec:,.2f}",f"{-ir:,.2f}",f"{incurred:,.2f}",f"{-paid:,.2f}",f"{-acq:,.2f}",f"{cl_ulae:,.2f}",f"{-maint:,.2f}",f"{cl_ra-op_ra:,.2f}",f"{cl_icl:,.2f}"]
+                    }
+                    st.dataframe(pd.DataFrame(roll_data), width='stretch', hide_index=True)
+
+                st.subheader("Consolidated Liability Rollforward")
+                T = lambda d: sum(v for v in d.values())
+                tot_op_upr=T({p:op_reserves.get(p,{}).get('UPR',0) for p in portfolios}); tot_cl_upr=T({p:closing_reserves.get(p,{}).get('UPR',0) for p in portfolios})
+                tot_op_ocr=T({p:op_reserves.get(p,{}).get('OCR',0) for p in portfolios}); tot_cl_ocr=T({p:closing_reserves.get(p,{}).get('OCR',0) for p in portfolios})
+                tot_op_ibnr=T({p:op_reserves.get(p,{}).get('IBNR',0) for p in portfolios}); tot_cl_ibnr=T({p:closing_reserves.get(p,{}).get('IBNR',0) for p in portfolios})
+                tot_op_ulae=T({p:op_reserves.get(p,{}).get('ULAE',0) for p in portfolios}); tot_cl_ulae=T({p:closing_reserves.get(p,{}).get('ULAE',0) for p in portfolios})
+                tot_op_ra=T({p:op_reserves.get(p,{}).get('RA',0) for p in portfolios}); tot_cl_ra=T({p:closing_reserves.get(p,{}).get('RA',0) for p in portfolios})
+                tot_prem=T({p:cf_reserves.get(p,{}).get('Premiums_Received',0) for p in portfolios})
+                tot_paid=T({p:cf_reserves.get(p,{}).get('Paid_Claims',0) for p in portfolios})
+                tot_acq=T({p:cf_reserves.get(p,{}).get('Acquisition_Costs',0) for p in portfolios})
+                tot_maint=T({p:cf_reserves.get(p,{}).get('Maintenance_Expenses',0) for p in portfolios})
+                tot_ir=tot_op_upr+tot_prem-tot_cl_upr
+                tot_incurred=tot_paid+tot_cl_ocr+tot_cl_ibnr-tot_op_ocr-tot_op_ibnr
+                tot_op_icf=tot_op_ocr+tot_op_ibnr+tot_op_ulae; tot_cl_icf=tot_cl_ocr+tot_cl_ibnr+tot_cl_ulae
+                tot_op_icl=tot_op_upr+tot_op_icf+tot_op_ra; tot_cl_icl=tot_cl_upr+tot_cl_icf+tot_cl_ra
+                consol_data = {
+                    "Line Item": ["Opening Balance","Premiums Received","Insurance Revenue","Incurred Claims","Paid Claims","Acquisition Costs","ULAE","Maintenance Expenses","Change in RA","Closing Balance"],
+                    "LRC (UPR)": [f"{tot_op_upr:,.2f}",f"{tot_prem:,.2f}",f"{-tot_ir:,.2f}","-","-","-","-","-","-",f"{tot_cl_upr:,.2f}"],
+                    "LIC (FCF)": [f"{tot_op_icf:,.2f}","-","-",f"{tot_incurred:,.2f}",f"{-tot_paid:,.2f}","-",f"{tot_cl_ulae:,.2f}",f"{-tot_maint:,.2f}","-",f"{tot_cl_icf:,.2f}"],
+                    "LIC (RA)": [f"{tot_op_ra:,.2f}","-","-","-","-","-","-","-",f"{tot_cl_ra-tot_op_ra:,.2f}",f"{tot_cl_ra:,.2f}"],
+                    "ICL": [f"{tot_op_icl:,.2f}",f"{tot_prem:,.2f}",f"{-tot_ir:,.2f}",f"{tot_incurred:,.2f}",f"{-tot_paid:,.2f}",f"{-tot_acq:,.2f}",f"{tot_cl_ulae:,.2f}",f"{-tot_maint:,.2f}",f"{tot_cl_ra-tot_op_ra:,.2f}",f"{tot_cl_icl:,.2f}"]
+                }
+                st.dataframe(pd.DataFrame(consol_data), width='stretch', hide_index=True)
+
+                st.subheader("IFRS 17 Income Statement")
+                income_data = {
+                    "Line Item": ["Insurance revenue","Insurance service expenses","  Incurred claims","  Acquisition costs","  ULAE","  Maintenance expenses","Insurance service result","Insurance Finance Result","Profit before tax"],
+                    "Amount": [f"{tot_ir:,.2f}",f"{(tot_incurred+tot_acq+tot_cl_ulae+tot_maint):,.2f}",f"{tot_incurred:,.2f}",f"{tot_acq:,.2f}",f"{tot_cl_ulae:,.2f}",f"{tot_maint:,.2f}",f"{tot_ir-tot_incurred-tot_acq-tot_cl_ulae-tot_maint:,.2f}","0.00",f"{tot_ir-tot_incurred-tot_acq-tot_cl_ulae-tot_maint:,.2f}"]
+                }
+                st.dataframe(pd.DataFrame(income_data), width='stretch', hide_index=True)
+
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as w:
+                    meta_df = pd.DataFrame([
+                        {"Field":"Creation","Value":st.session_state.report_metadata.get('creation_time','')},
+                        {"Field":"Created By","Value":st.session_state.report_metadata.get('created_by','')},
+                        {"Field":"Version","Value":st.session_state.report_metadata.get('version','')},
+                        {"Field":"Run ID","Value":st.session_state.report_metadata.get('run_id','')},
+                        {"Field":"Client","Value":st.session_state.report_metadata.get('client','')},
+                        {"Field":"Valuation Date","Value":st.session_state.report_metadata.get('valuation_date','')},
+                    ])
+                    meta_df.to_excel(w, index=False, sheet_name='Report_Metadata')
+                    summary_df.to_excel(w, index=False, sheet_name='Liability_Summary')
+                    pd.DataFrame(income_data).to_excel(w, index=False, sheet_name='Income_Statement')
+                    pd.DataFrame(consol_data).to_excel(w, index=False, sheet_name='Consolidated_Rollforward')
+                    for p in portfolios:
+                        op=op_reserves.get(p,{}); cl=closing_reserves.get(p,{}); cf=cf_reserves.get(p,{})
+                        op_upr=op.get('UPR',0); cl_upr=cl.get('UPR',0)
+                        op_ocr=op.get('OCR',0); cl_ocr=cl.get('OCR',0)
+                        op_ibnr=op.get('IBNR',0); cl_ibnr=cl.get('IBNR',0)
+                        op_ulae=op.get('ULAE',0); cl_ulae=cl.get('ULAE',0)
+                        op_ra=op.get('RA',0); cl_ra=cl.get('RA',0)
+                        prem_rec=cf.get('Premiums_Received',0); paid=cf.get('Paid_Claims',0)
+                        acq=cf.get('Acquisition_Costs',0); maint=cf.get('Maintenance_Expenses',0)
+                        ir=ins_rev.get(p,0); incurred=paid+cl_ocr+cl_ibnr-op_ocr-op_ibnr
+                        op_icf=op_ocr+op_ibnr+op_ulae; cl_icf=cl_ocr+cl_ibnr+cl_ulae
+                        op_icl=op_upr+op_icf+op_ra; cl_icl=cl_upr+cl_icf+cl_ra
+                        pr_data = {
+                            "Line Item": ["Opening Balance","Premiums Received","Insurance Revenue","Incurred Claims","Paid Claims","Acquisition Costs","ULAE","Maintenance Expenses","Change in RA","Closing Balance"],
+                            "LRC (UPR)": [op_upr,prem_rec,-ir,0,0,0,0,0,0,cl_upr],
+                            "LIC (FCF)": [op_icf,0,0,incurred,-paid,0,cl_ulae,-maint,0,cl_icf],
+                            "LIC (RA)": [op_ra,0,0,0,0,0,0,0,cl_ra-op_ra,cl_ra],
+                            "ICL": [op_icl,prem_rec,-ir,incurred,-paid,-acq,cl_ulae,-maint,cl_ra-op_ra,cl_icl]
+                        }
+                        safe_name = re.sub(r'[\\/*?:\[\]]', '', p)[:28]
+                        pd.DataFrame(pr_data).to_excel(w, index=False, sheet_name=f'RW_{safe_name}')
+                output.seek(0)
+                sc = re.sub(r'[\\/*?:"<>|]',"",report_client).strip() or "Client"
+                st.download_button("⬇  Download IFRS 17 Report (.xlsx)", data=output, file_name=f"{sc}_IFRS17_Report_{report_date}.xlsx", key="fv_dl")
+
+
+# =============================================================================
+#  BRANCH 2 — FULL IFRS 17 LRC (PAA)  [NEW, FULLY INDEPENDENT]
+# =============================================================================
+
+def _render_full_ifrs17_lrc_branch(report_date, report_client):
+    val_date = pd.Timestamp(str(report_date))
+    ifrs17_data = {}
+
+    # ---- CONFIGURATION TOGGLES ----
+    st.markdown('<div class="section-container"><h3>IFRS 17 Configuration Toggles</h3></div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        iacf_toggle = st.selectbox("IACF Treatment", ["Expense Immediately", "Capitalize & Amortize"], key="cfg_iacf")
+    with c2:
+        discount_toggle = st.selectbox("Discounting", ["No Discounting", "Apply Discounting"], key="cfg_discount")
+    with c3:
+        invest_toggle = st.selectbox("Investment Components", ["No", "Yes"], key="cfg_invest")
+    with c4:
+        revenue_toggle = st.selectbox("Revenue Method", ["Passage of Time", "Emergence of Risk"], key="cfg_revenue")
+
+    # ---- DATA FILES ----
+    st.markdown('<div class="section-container"><h3>Upload Data Files</h3></div>', unsafe_allow_html=True)
+
+    # Section 1: Opening Balances
+    st.markdown("#### Section 1: Opening Balances")
+    ob_file = st.file_uploader("Upload Opening Balances (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_ob")
+    if ob_file is not None:
+        try:
+            ob_df = pd.read_csv(ob_file) if ob_file.name.endswith('.csv') else pd.read_excel(ob_file)
+            ob_df.columns = ob_df.columns.astype(str).str.strip()
+            st.dataframe(ob_df.head(3), width='stretch')
+            ob_map = map_columns(ob_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'OpeningBalances')
+            ob_df = ob_df.rename(columns=ob_map)
+            ob_df['Opening_LRC_Excl_Loss'] = pd.to_numeric(ob_df['Opening_LRC_Excl_Loss'], errors='coerce').fillna(0)
+            ob_df['Opening_Loss_Component'] = pd.to_numeric(ob_df['Opening_Loss_Component'], errors='coerce').fillna(0)
+            ifrs17_data['opening_balances'] = ob_df
+            st.success("Opening balances mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # Section 2: Cashflows
+    st.markdown("#### Section 2: Cashflows")
+    cf_file = st.file_uploader("Upload Cashflows (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_cf")
+    if cf_file is not None:
+        try:
+            cf_df = pd.read_csv(cf_file) if cf_file.name.endswith('.csv') else pd.read_excel(cf_file)
+            cf_df.columns = cf_df.columns.astype(str).str.strip()
+            st.dataframe(cf_df.head(3), width='stretch')
+            cf_map = map_columns(cf_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'Cashflows')
+            cf_df = cf_df.rename(columns=cf_map)
+            cf_df['Premiums_Received'] = pd.to_numeric(cf_df['Premiums_Received'], errors='coerce').fillna(0)
+            cf_df['IACF_Paid'] = pd.to_numeric(cf_df['IACF_Paid'], errors='coerce').fillna(0)
+            cf_df['Investment_Components_Paid'] = pd.to_numeric(cf_df['Investment_Components_Paid'], errors='coerce').fillna(0)
+            ifrs17_data['cashflows'] = cf_df
+            st.success("Cashflows mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # Section 3: Policy Data
+    st.markdown("#### Section 3: Policy Data")
+    pdf_file = st.file_uploader("Upload Premium Schedule (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_pd")
+    if pdf_file is not None:
+        try:
+            pol_df = pd.read_csv(pdf_file) if pdf_file.name.endswith('.csv') else pd.read_excel(pdf_file)
+            pol_df.columns = pol_df.columns.astype(str).str.strip()
+            st.dataframe(pol_df.head(3), width='stretch')
+            pol_map = map_columns(pol_df, ['Group','Start_Date','End_Date','Written_Premium'], 'PolicyData')
+            pol_df = pol_df.rename(columns=pol_map)
+            pol_df['Start_Date'] = pd.to_datetime(pol_df['Start_Date'], errors='coerce')
+            pol_df['End_Date'] = pd.to_datetime(pol_df['End_Date'], errors='coerce')
+            pol_df['Written_Premium'] = pd.to_numeric(pol_df['Written_Premium'], errors='coerce').fillna(0)
+            pol_df = pol_df.dropna(subset=['Start_Date','End_Date'])
+            pol_df = pol_df[pol_df['End_Date'] > pol_df['Start_Date']]
+            ifrs17_data['policy_data'] = pol_df
+            st.success("Policy data mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # Section 3b: Investment Components
+    if invest_toggle == "Yes":
+        st.markdown("#### Section 3b: Investment Components")
+        ic_file = st.file_uploader("Upload Investment Components by Group (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_ic")
+        if ic_file is not None:
+            try:
+                ic_df = pd.read_csv(ic_file) if ic_file.name.endswith('.csv') else pd.read_excel(ic_file)
+                ic_df.columns = ic_df.columns.astype(str).str.strip()
+                st.dataframe(ic_df.head(3), width='stretch')
+                ic_map = map_columns(ic_df, ['Group','Total_Investment_Components'], 'InvestmentComponents')
+                ic_df = ic_df.rename(columns=ic_map)
+                ic_df['Total_Investment_Components'] = pd.to_numeric(ic_df['Total_Investment_Components'], errors='coerce').fillna(0)
+                ifrs17_data['investment_components'] = ic_df
+                st.success("Investment Components mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    # Section 4: Loss Component Data
+    st.markdown("#### Section 4: Loss Component Data (Ratio-Based)")
+    lc_file = st.file_uploader("Upload Loss Component Data (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_lc")
+    if lc_file is not None:
+        try:
+            lc_df = pd.read_csv(lc_file) if lc_file.name.endswith('.csv') else pd.read_excel(lc_file)
+            lc_df.columns = lc_df.columns.astype(str).str.strip()
+            st.dataframe(lc_df.head(3), width='stretch')
+            lc_map = map_columns(
+                lc_df,
+                ['Group', 'Expected_Future_Premiums', 'Loss_Ratio', 'Commission_Ratio',
+                 'Expense_Ratio', 'RA_Ratio'],
+                'LossComponent'
+            )
+            lc_df = lc_df.rename(columns=lc_map)
+            for col in ['Expected_Future_Premiums', 'Loss_Ratio', 'Commission_Ratio', 'Expense_Ratio', 'RA_Ratio']:
+                lc_df[col] = pd.to_numeric(lc_df[col], errors='coerce').fillna(0)
+            ifrs17_data['loss_component'] = lc_df
+            st.success("Loss Component data mapped.")
+        except Exception as e: st.error(f"Error: {e}")
+
+    # Section 5: Discounting Data
+    if discount_toggle == "Apply Discounting":
+        st.markdown("#### Section 5: Discounting Data (Yield Curve)")
+        yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_yc")
+        if yc_file is not None:
+            try:
+                yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
+                yc_df.columns = yc_df.columns.astype(str).str.strip()
+                st.dataframe(yc_df.head(3), width='stretch')
+                yc_map = map_columns(yc_df, ['Duration_Years','Spot_Rate'], 'YieldCurve')
+                yc_df = yc_df.rename(columns=yc_map)
+                yc_df['Duration_Years'] = pd.to_numeric(yc_df['Duration_Years'], errors='coerce')
+                yc_df['Spot_Rate'] = pd.to_numeric(yc_df['Spot_Rate'], errors='coerce')
+                yc_df = yc_df.dropna().sort_values('Duration_Years')
+                ifrs17_data['yield_curve'] = yc_df
+                st.success("Yield Curve mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    # Section 6: Revenue Recognition Data
+    if revenue_toggle == "Emergence of Risk":
+        st.markdown("#### Section 6: Revenue Recognition Data (Claims Curve)")
+        rc_file = st.file_uploader("Upload Claims Emergence Curve (CSV/Excel)", type=["csv","xlsx","xls"], key="ifrs17_rc")
+        if rc_file is not None:
+            try:
+                rc_df = pd.read_csv(rc_file) if rc_file.name.endswith('.csv') else pd.read_excel(rc_file)
+                rc_df.columns = rc_df.columns.astype(str).str.strip()
+                st.dataframe(rc_df.head(3), width='stretch')
+                rc_map = map_columns(rc_df, ['Period','Percentage'], 'ClaimsCurve')
+                rc_df = rc_df.rename(columns=rc_map)
+                rc_df['Percentage'] = pd.to_numeric(rc_df['Percentage'], errors='coerce').fillna(0)
+                ifrs17_data['claims_curve'] = rc_df
+                st.success("Claims Curve mapped.")
+            except Exception as e: st.error(f"Error: {e}")
+
+    # ---- RUN BUTTON ----
+    if st.button("Run Full IFRS 17 LRC Valuation", key="ifrs17_run", width='stretch'):
+        if 'policy_data' not in ifrs17_data or ifrs17_data['policy_data'].empty:
+            st.warning("Please upload Policy Data (Section 3) before running.")
+            return
+
+        with st.spinner("Running Full IFRS 17 LRC engine..."):
+            policy_df = ifrs17_data['policy_data'].copy()
+            portfolios = sorted(policy_df['Group'].dropna().unique().tolist())
+            st.info(f"Groups: {', '.join(portfolios)}")
+
+            policy_df['Policy_Days'] = (policy_df['End_Date'] - policy_df['Start_Date']).dt.days
+            policy_df = policy_df[policy_df['Policy_Days'] > 0]
+            policy_df['Passed_Days'] = (val_date - policy_df['Start_Date']).dt.days
+            policy_df['Passed_Days'] = np.clip(policy_df['Passed_Days'], 0, policy_df['Policy_Days'])
+            policy_df['Remaining_Days'] = policy_df['Policy_Days'] - policy_df['Passed_Days']
+            policy_df['UPR'] = policy_df['Written_Premium'] * (policy_df['Remaining_Days'] / policy_df['Policy_Days'])
+
+            lrc_results = {}
+
+            for group in portfolios:
+                group_policies = policy_df[policy_df['Group'] == group].copy()
+                if group_policies.empty: continue
+
+                group_cf = ifrs17_data['cashflows'][ifrs17_data['cashflows']['Group'] == group] if 'cashflows' in ifrs17_data else pd.DataFrame()
+                group_ob = ifrs17_data['opening_balances'][ifrs17_data['opening_balances']['Group'] == group] if 'opening_balances' in ifrs17_data else pd.DataFrame()
+                group_lc = ifrs17_data['loss_component'][ifrs17_data['loss_component']['Group'] == group] if 'loss_component' in ifrs17_data else pd.DataFrame()
+                group_ic = ifrs17_data['investment_components'][ifrs17_data['investment_components']['Group'] == group] if 'investment_components' in ifrs17_data else pd.DataFrame()
+
+                opening_lrc_excl_loss = float(group_ob['Opening_LRC_Excl_Loss'].values[0]) if not group_ob.empty else 0.0
+                opening_loss_component = float(group_ob['Opening_Loss_Component'].values[0]) if not group_ob.empty else 0.0
+
+                premiums_received = float(group_cf['Premiums_Received'].values[0]) if not group_cf.empty else 0.0
+                iacf_paid_raw = float(group_cf['IACF_Paid'].values[0]) if not group_cf.empty else 0.0
+                investment_components_paid = float(group_cf['Investment_Components_Paid'].values[0]) if not group_cf.empty else 0.0
+                iacf_paid = iacf_paid_raw if iacf_toggle == "Capitalize & Amortize" else 0.0
+
+                group_policies['Duration_Years'] = group_policies['Policy_Days'] / 365.25
+                total_wp = group_policies['Written_Premium'].sum()
+                weighted_duration = np.average(group_policies['Duration_Years'], weights=group_policies['Written_Premium']) if total_wp > 0 else 0.0
+                locked_in_years = max(1, int(np.ceil(weighted_duration))) if weighted_duration > 0 else 1
+
+                total_written_premium = total_wp
+                total_policy_days = group_policies['Policy_Days'].sum()
+                total_passed_days = group_policies['Passed_Days'].sum()
+
+                if revenue_toggle == "Passage of Time":
+                    allocation_factor = (total_passed_days / total_policy_days) if total_policy_days > 0 else 0.0
+                    allocated_premium = total_written_premium * allocation_factor
+                else:
+                    claims_curve = ifrs17_data.get('claims_curve')
+                    allocation_factor = float(claims_curve['Percentage'].sum()) if claims_curve is not None and not claims_curve.empty else 0.0
+                    allocated_premium = total_written_premium * allocation_factor
+
+                total_investment_components = float(group_ic['Total_Investment_Components'].values[0]) if not group_ic.empty else 0.0
+                allocated_investment_components = total_investment_components * allocation_factor
+
+                locked_in_rate = 0.0
+                if discount_toggle == "Apply Discounting":
+                    yield_curve = ifrs17_data.get('yield_curve')
+                    if yield_curve is not None and not yield_curve.empty:
+                        yc_years = yield_curve['Duration_Years'].values
+                        yc_rates = yield_curve['Spot_Rate'].values
+                        if locked_in_years in yc_years:
+                            locked_in_rate = float(yc_rates[np.where(yc_years == locked_in_years)[0][0]])
+                        else:
+                            locked_in_rate = float(np.interp(locked_in_years, yc_years, yc_rates, left=yc_rates[0], right=yc_rates[-1]))
+                financing_adjustment = opening_lrc_excl_loss * locked_in_rate
+
+                insurance_revenue = (allocated_premium - allocated_investment_components) + financing_adjustment
+
+                iacf_amortized = (iacf_paid * allocation_factor) if iacf_toggle == "Capitalize & Amortize" else 0.0
+
+                if not group_lc.empty:
+                    expected_future_premiums = float(group_lc['Expected_Future_Premiums'].values[0])
+                    loss_ratio = float(group_lc['Loss_Ratio'].values[0])
+                    commission_ratio = float(group_lc['Commission_Ratio'].values[0])
+                    expense_ratio = float(group_lc['Expense_Ratio'].values[0])
+                    ra_ratio = float(group_lc['RA_Ratio'].values[0])
+                    combined_ratio = loss_ratio + commission_ratio + expense_ratio + ra_ratio
+                    closing_loss_component = expected_future_premiums * max(0.0, combined_ratio - 1.0)
+                else:
+                    expected_future_premiums = 0.0
+                    loss_ratio = commission_ratio = expense_ratio = ra_ratio = 0.0
+                    combined_ratio = 0.0
+                    closing_loss_component = 0.0
+
+                loss_reversals = min(opening_loss_component, max(allocated_premium, 0.0))
+                new_losses_arising = closing_loss_component - opening_loss_component + loss_reversals
+
+                closing_lrc_excl_loss = (
+                    opening_lrc_excl_loss
+                    + premiums_received
+                    - insurance_revenue
+                    - iacf_paid
+                    + iacf_amortized
+                    + financing_adjustment
+                    - investment_components_paid
+                )
+                total_closing_lrc = closing_lrc_excl_loss + closing_loss_component
+
+                audit_diff = abs(total_closing_lrc - (closing_lrc_excl_loss + closing_loss_component))
+                audit_pass = audit_diff <= 0.01
+
+                upr_snapshot = float(group_policies['UPR'].sum())
+                upr_diff_abs = total_closing_lrc - upr_snapshot
+                upr_diff_pct = (upr_diff_abs / upr_snapshot * 100) if upr_snapshot != 0 else 0.0
+
+                lrc_results[group] = {
+                    'Opening_LRC_Excl_Loss': opening_lrc_excl_loss,
+                    'Opening_Loss_Component': opening_loss_component,
+                    'Premiums_Received': premiums_received,
+                    'Allocated_Premium': allocated_premium,
+                    'Allocated_Investment_Components': allocated_investment_components,
+                    'Insurance_Revenue': insurance_revenue,
+                    'IACF_Paid': iacf_paid,
+                    'IACF_Amortized': iacf_amortized,
+                    'Financing_Adjustment': financing_adjustment,
+                    'Locked_In_Rate': locked_in_rate,
+                    'Locked_In_Years': locked_in_years,
+                    'Investment_Components_Paid': investment_components_paid,
+                    'Loss_Ratio': loss_ratio,
+                    'Commission_Ratio': commission_ratio,
+                    'Expense_Ratio': expense_ratio,
+                    'RA_Ratio': ra_ratio,
+                    'Combined_Ratio': combined_ratio,
+                    'Expected_Future_Premiums': expected_future_premiums,
+                    'Loss_Reversals': loss_reversals,
+                    'New_Losses_Arising': new_losses_arising,
+                    'Closing_LRC_Excl_Loss': closing_lrc_excl_loss,
+                    'Closing_Loss_Component': closing_loss_component,
+                    'Total_Closing_LRC': total_closing_lrc,
+                    'Audit_Diff': audit_diff,
+                    'Audit_Pass': audit_pass,
+                    'UPR_Snapshot': upr_snapshot,
+                    'UPR_Diff_Abs': upr_diff_abs,
+                    'UPR_Diff_Pct': upr_diff_pct,
+                }
+
+            st.success(f"Full IFRS 17 LRC calculated for {len(lrc_results)} group(s).")
+
+            st.subheader("IFRS 17 LRC Results")
+
+            st.subheader("LRC Summary by Group")
+            summary_rows = []
+            for group, data in lrc_results.items():
+                summary_rows.append({
+                    'Group': group,
+                    'LRC (excl. Loss Component)': data['Closing_LRC_Excl_Loss'],
+                    'Loss Component': data['Closing_Loss_Component'],
+                    'Total LRC': data['Total_Closing_LRC'],
+                    'Audit': '✓ Pass' if data['Audit_Pass'] else '✗ Fail',
+                })
+            summary_df = pd.DataFrame(summary_rows)
+            disp_summary = summary_df.copy()
+            for c in disp_summary.columns:
+                if c not in ('Group', 'Audit'):
+                    disp_summary[c] = disp_summary[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp_summary, width='stretch', hide_index=True)
+
+            st.subheader("LRC Rollforward — by Group")
+            for group, data in lrc_results.items():
+                st.markdown(f"**{group}**")
+                roll_data = {
+                    "Line Item": [
+                        "Opening LRC (excl. Loss)", "Opening Loss Component", "Premiums Received",
+                        "Insurance Revenue", "IACF Paid", "IACF Amortized",
+                        "Financing Adjustment", "Investment Components Paid",
+                        "Loss Reversals", "New Losses Arising",
+                        "Closing LRC (excl. Loss)", "Closing Loss Component", "Total Closing LRC"
+                    ],
+                    "Amount": [
+                        f"{data['Opening_LRC_Excl_Loss']:,.2f}",
+                        f"{data['Opening_Loss_Component']:,.2f}",
+                        f"{data['Premiums_Received']:,.2f}",
+                        f"{-data['Insurance_Revenue']:,.2f}",
+                        f"{-data['IACF_Paid']:,.2f}",
+                        f"{data['IACF_Amortized']:,.2f}",
+                        f"{data['Financing_Adjustment']:,.2f}",
+                        f"{-data['Investment_Components_Paid']:,.2f}",
+                        f"{-data['Loss_Reversals']:,.2f}",
+                        f"{data['New_Losses_Arising']:,.2f}",
+                        f"{data['Closing_LRC_Excl_Loss']:,.2f}",
+                        f"{data['Closing_Loss_Component']:,.2f}",
+                        f"{data['Total_Closing_LRC']:,.2f}"
+                    ]
+                }
+                st.dataframe(pd.DataFrame(roll_data), width='stretch', hide_index=True)
+
+            st.subheader("UPR Comparison (IFRS 4 vs IFRS 17)")
+            st.info("The UPR snapshot is NOT used to drive the LRC calculation. It is computed independently for comparison purposes.")
+            comparison_rows = []
+            for group, data in lrc_results.items():
+                comparison_rows.append({
+                    'Group': group,
+                    'UPR (IFRS 4)': data['UPR_Snapshot'],
+                    'Total LRC (IFRS 17)': data['Total_Closing_LRC'],
+                    'Difference ($)': data['UPR_Diff_Abs'],
+                    'Difference (%)': f"{data['UPR_Diff_Pct']:.2f}%"
+                })
+            comparison_df = pd.DataFrame(comparison_rows)
+            disp_comp = comparison_df.copy()
+            for c in disp_comp.columns:
+                if c not in ('Group', 'Difference (%)'):
+                    disp_comp[c] = disp_comp[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp_comp, width='stretch', hide_index=True)
+
+            st.subheader("Consolidated LRC Rollforward")
+            agg = lambda key: sum(d[key] for d in lrc_results.values())
+            consol_data = {
+                "Line Item": [
+                    "Opening LRC (excl. Loss)", "Opening Loss Component", "Premiums Received",
+                    "Insurance Revenue", "IACF Paid", "IACF Amortized",
+                    "Financing Adjustment", "Investment Components Paid",
+                    "Loss Reversals", "New Losses Arising",
+                    "Closing LRC (excl. Loss)", "Closing Loss Component", "Total Closing LRC"
+                ],
+                "Amount": [
+                    f"{agg('Opening_LRC_Excl_Loss'):,.2f}", f"{agg('Opening_Loss_Component'):,.2f}",
+                    f"{agg('Premiums_Received'):,.2f}", f"{-agg('Insurance_Revenue'):,.2f}",
+                    f"{-agg('IACF_Paid'):,.2f}", f"{agg('IACF_Amortized'):,.2f}",
+                    f"{agg('Financing_Adjustment'):,.2f}", f"{-agg('Investment_Components_Paid'):,.2f}",
+                    f"{-agg('Loss_Reversals'):,.2f}", f"{agg('New_Losses_Arising'):,.2f}",
+                    f"{agg('Closing_LRC_Excl_Loss'):,.2f}", f"{agg('Closing_Loss_Component'):,.2f}",
+                    f"{agg('Total_Closing_LRC'):,.2f}"
+                ]
+            }
+            st.dataframe(pd.DataFrame(consol_data), width='stretch', hide_index=True)
+
+
+# =============================================================================
+#  MAIN ROUTER
+# =============================================================================
+
+page_renderers = {
+    'home': render_home,
+    'full_valuation': render_full_valuation,
+    'lrc': render_lrc,
+    'lic': render_lic,
+    'fulfilment_cashflows': render_fulfilment_cashflows,
+    'ibnr_menu': render_ibnr_menu,
+    'risk_adjustment': render_risk_adjustment,
+    'upr_calculator': render_upr_calculator,
+    'ocr_calculator': render_ocr_calculator,
+    'bcl_calculator': render_bcl_calculator,
+    'capecod_calculator': render_capecod_calculator,
+    'bf_calculator': render_bf_calculator,
+    'ulae_calculator': render_ulae_calculator,
+    'npr_calculator': render_npr_calculator,
+    'mack_calculator': render_mack_calculator,
+    'bootstrap_calculator': render_bootstrap_calculator,
+    'loss_component': render_loss_component,
+}
+
+# =============================================================================
+#  APP ENTRY
+# =============================================================================
+
+current_page = st.session_state.page
+if current_page in page_renderers:
+    page_renderers[current_page]()
+else:
+    render_home()
+
+st.markdown('<div class="footer">© 2026 Next Vantage. All rights reserved. IFRS 17 PAA Engine v3.9.29.3</div>', unsafe_allow_html=True)
