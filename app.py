@@ -551,6 +551,19 @@ def render_bcl_calculator():
                 })
                 st.dataframe(ldf_df, width='stretch')
 
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    # Calculate CV for first 3 factors
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
+
                 selected_method = st.selectbox(
                     "Select LDF Method",
                     ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
@@ -702,6 +715,18 @@ def render_capecod_calculator():
                     "Wtd Last 3": all_ldfs["weighted_last_3"]
                 })
                 st.dataframe(ldf_df, width='stretch')
+
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
 
                 selected_method = st.selectbox(
                     "Select LDF Method",
@@ -870,6 +895,18 @@ def render_bf_calculator():
                     "Wtd Last 3": all_ldfs["weighted_last_3"]
                 })
                 st.dataframe(ldf_df, width='stretch')
+
+                # Calculate Recommended LDF
+                rec_method = "volume_weighted" # default
+                min_cv = float('inf')
+                for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
+                    factors = all_ldfs[method]
+                    if len(factors) >= 3:
+                        cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
+                        if cv < min_cv:
+                            min_cv = cv
+                            rec_method = method
+                st.info(f"**Recommended LDF Method:** {rec_method.replace('_', ' ').title()} (Lowest CV of first 3 factors: {min_cv:.2%})")
 
                 selected_method = st.selectbox(
                     "Select LDF Method",
