@@ -23,7 +23,6 @@ import importlib.util
 import glob
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
@@ -61,7 +60,7 @@ mack_engine = import_file_glob("LIC_Calculators/RA_Calculators/mack_ra.py")
 bootstrap_engine = import_file_glob("LIC_Calculators/RA_Calculators/bootstrap_ra.py")
 engine_utils = import_file_glob("utils/actuarial_engine_utils.py")
 
-# --- Load Full Valuation with multiple fallback methods ---
+# --- Load Full Valuation engine (for Full IFRS 17 Valuation mode) ---
 full_engine = None
 for pattern in ["Full_Valuation/full_LRC_IFRS17.py", "Full_Valuation/*.py"]:
     full_engine = import_file_glob(pattern)
@@ -96,18 +95,15 @@ module_status = {
     "Engine Utils": engine_utils,
     "Full Valuation": full_engine,
 }
-
 critical_modules = ["UPR Engine", "OCR Engine", "Engine Utils"]
 missing_critical = [name for name in critical_modules if module_status[name] is None]
-
 if missing_critical:
     st.error("Critical Error: Essential modules could not be loaded.")
     for mod in missing_critical:
         st.error(f"  - {mod}")
     st.stop()
 
-missing_optional = [name for name, mod in module_status.items() 
-                    if mod is None and name not in critical_modules]
+missing_optional = [name for name, mod in module_status.items() if mod is None and name not in critical_modules]
 if missing_optional:
     with st.sidebar.expander("Module Status", expanded=False):
         st.warning("Some optional modules could not be loaded:")
@@ -133,9 +129,7 @@ with st.sidebar.expander("Debug Info", expanded=False):
 def _date_filter(df, col, from_date, to_date):
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
         df[col] = pd.to_datetime(df[col], errors='coerce')
-    fd = pd.Timestamp(from_date)
-    td = pd.Timestamp(to_date)
-    return df[(df[col] >= fd) & (df[col] <= td)]
+    return df[(df[col] >= pd.Timestamp(from_date)) & (df[col] <= pd.Timestamp(to_date))]
 
 def periods_per_year(grain):
     return {"Y": 1, "Q": 4, "M": 12}[grain]
@@ -153,13 +147,9 @@ def map_columns(df, required_fields, prefix):
         mapping[field] = st.selectbox(f"{field}", cols, index=default_idx, key=f"{prefix}_{field}")
     return mapping
 
-# =============================================================================
-#  INFLATION & DISCOUNTING UI HELPERS
-# =============================================================================
-
 def load_inflation_data_ui(grain_code, ppy, page_key):
     st.markdown("**Inflation Adjustment**")
-    inf_file = st.file_uploader("Upload Inflation Curve (CSV/Excel: Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{page_key}")
+    inf_file = st.file_uploader("Upload Inflation Curve (Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{page_key}")
     cum_inflation = None
     per_period_rates = None
     if inf_file:
@@ -182,25 +172,25 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
             annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
             per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
             cum_inflation = np.cumprod(1 + per_period_rates)
-            st.success("Inflation curve loaded and interpolated.")
+            st.success("Inflation curve loaded.")
         except Exception as e:
-            st.error(f"Inflation data error: {e}")
+            st.error(f"Inflation error: {e}")
     return cum_inflation, per_period_rates
 
 def load_discounting_data_ui(grain_code, ppy, page_key):
     st.markdown("**Discounting**")
-    disc_method = st.radio("Discounting Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
+    disc_method = st.radio("Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
     spot_rates = None
     flat_rate = None
     if disc_method == "Yield Curve":
-        yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel: Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
+        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
         if yc_file:
             try:
                 yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
                 yc_df.columns = yc_df.columns.astype(str).str.strip()
                 c1, c2 = st.columns(2)
                 with c1: m_col = st.selectbox("Duration Column", yc_df.columns, key=f"yc_m_{page_key}")
-                with c2: r_col = st.selectbox("Spot Rate Column (%)", yc_df.columns, key=f"yc_r_{page_key}")
+                with c2: r_col = st.selectbox("Rate Column (%)", yc_df.columns, key=f"yc_r_{page_key}")
                 yc_df = yc_df[[m_col, r_col]].dropna()
                 yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
                 yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
@@ -211,7 +201,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
                     f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
                 period_maturities = np.arange(1, 61) / ppy
                 spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
-                st.success("Yield curve loaded and interpolated.")
+                st.success("Yield curve loaded.")
             except Exception as e:
                 st.error(f"Yield curve error: {e}")
     elif disc_method == "Single Flat Rate":
@@ -391,7 +381,7 @@ def render_risk_adjustment():
 
 
 # =============================================================================
-#  INDIVIDUAL CALCULATORS (all unchanged from working version)
+#  INDIVIDUAL CALCULATORS (identical to the previously working versions)
 # =============================================================================
 
 def render_upr_calculator():
@@ -1385,12 +1375,12 @@ def render_bootstrap_calculator():
 
 
 # =============================================================================
-#  FULL VALUATION (UPDATED)
+#  FULL VALUATION (IFRS 17 Engine only)
 # =============================================================================
 
 def render_full_valuation():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Complete PAA LRC Rollforward & Simple PAA</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Complete PAA LRC Rollforward</p></div>', unsafe_allow_html=True)
     
     if full_engine is None:
         st.error("Full Valuation engine not available.")
@@ -1417,7 +1407,7 @@ def render_full_valuation():
         st.markdown('</div>', unsafe_allow_html=True)
     
     # --- Mode Selection ---
-    mode = st.radio("Valuation Mode", ["Full Valuation (All Files)", "Simple PAA (UPR Rollforward)"], key="fv_mode")
+    mode = st.radio("Valuation Mode", ["Full Valuation (IFRS 17 Engine)", "Simple PAA (UPR Rollforward)"], key="fv_mode")
     
     st.markdown("### Configuration")
     c1, c2, c3, c4 = st.columns(4)
@@ -1437,21 +1427,16 @@ def render_full_valuation():
         'revenue_toggle': revenue_toggle
     }
     
-    st.markdown("### Upload Files")
-    
-    if mode == "Full Valuation (All Files)":
+    if mode == "Full Valuation (IFRS 17 Engine)":
+        st.markdown("### Upload Files")
         c1, c2 = st.columns(2)
         with c1:
             opening_file = st.file_uploader("1. Opening Balances (Group, Opening_LRC_Excl_Loss, Opening_Loss_Component)", type=["csv","xlsx"], key="fv_ob")
             policy_file = st.file_uploader("3. Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol")
         with c2:
             cashflows_file = st.file_uploader("2. Cashflows (Group, Premiums_Received, IACF_Paid, Investment_Components_Paid)", type=["csv","xlsx"], key="fv_cf")
-            # Claims curve – only shown when Emergence of Risk is selected
             if revenue_toggle == "Emergence of Risk":
-                claims_curve_file = st.file_uploader(
-                    "6. Claims Curve (Period, Percentage) – Optional",
-                    type=["csv","xlsx"], key="fv_cc"
-                )
+                claims_curve_file = st.file_uploader("6. Claims Curve (Period, Percentage) – Optional", type=["csv","xlsx"], key="fv_cc")
             else:
                 claims_curve_file = None
         
@@ -1527,7 +1512,7 @@ def render_full_valuation():
             except Exception as e:
                 st.error(f"Loss Component error: {e}")
         
-        # Required files: opening, cashflows, policy (loss component will be derived)
+        # Required files: opening, cashflows, policy, loss component input
         required = [opening_file, cashflows_file, policy_file, lc_data_file]
         if all(f is not None for f in required):
             try:
@@ -1613,9 +1598,9 @@ def render_full_valuation():
                 st.error(f"Error: {e}")
                 with st.expander("Details"): import traceback; st.code(traceback.format_exc())
         else:
-            st.info("Please upload all required files (Opening Balances, Cashflows, Policy, Loss Component Input).")
+            st.info("Please upload all required files.")
     
-    else:  # Simple PAA mode
+    else:  # Simple PAA (UPR Rollforward) – unchanged
         c1, c2 = st.columns(2)
         with c1:
             policy_file = st.file_uploader("Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol_simple")
