@@ -109,22 +109,10 @@ if missing_critical:
 missing_optional = [name for name, mod in module_status.items() 
                     if mod is None and name not in critical_modules]
 if missing_optional:
-    with st.sidebar.expander("Module Status", expanded=False):
+    with st.expander("Module Status", expanded=False):
         st.warning("Some optional modules could not be loaded:")
         for mod in missing_optional:
             st.write(f"  - {mod}")
-
-# Debug info
-with st.sidebar.expander("Debug Info", expanded=False):
-    st.write(f"BASE_DIR: {BASE_DIR}")
-    st.write(f"full_engine loaded: {full_engine is not None}")
-    if full_engine is not None:
-        st.write(f"Has calculate_full_ifrs17_lrc: {hasattr(full_engine, 'calculate_full_ifrs17_lrc')}")
-    fv_dir = os.path.join(BASE_DIR, "Full_Valuation")
-    if os.path.exists(fv_dir):
-        st.write(f"Full_Valuation exists, files: {os.listdir(fv_dir)}")
-    else:
-        st.write("Full_Valuation directory NOT found")
 
 # =============================================================================
 #  UTILITY FUNCTIONS
@@ -223,7 +211,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
 #  STREAMLIT CONFIGURATION
 # =============================================================================
 
-st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -233,7 +221,25 @@ st.markdown("""
        text spilling over card/button edges and overlapping neighbours). */
     *, *::before, *::after { box-sizing: border-box !important; }
 
+    /* ---- No side panel ----
+       The app has no sidebar content; hide the sidebar and its
+       expand/collapse arrow control outright so it can never render
+       (including the garbled icon-font text glitch it was producing). */
+    [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+
+    /* ---- Protect icon fonts from the serif override ----
+       The h1..label rule below forces every heading/paragraph/div/span to
+       the serif font. Streamlit's built-in icons (arrows, chevrons, etc.)
+       are rendered as ligature text in a span using an icon font; forcing
+       serif onto that span breaks the ligature and prints raw text like
+       "keyboard_double_arrow_right" instead of the glyph. Excluding icon
+       spans keeps every icon in the app rendering correctly. */
+    [data-testid="stIconMaterial"], span[class*="material-symbols"], span[class*="material-icons"] {
+        font-family: 'Material Symbols Rounded', 'Material Icons' !important;
+    }
+
     .stApp { background-color: #FFFFFF; color: #000000; font-family: 'Calisto MT', 'Georgia', serif; font-size: 11pt; line-height: 1.5; }
+
     h1, h2, h3, h4, h5, h6, p, div, span, label {
         font-family: 'Calisto MT', 'Georgia', serif !important;
         line-height: 1.45;
