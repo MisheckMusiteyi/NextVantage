@@ -1387,9 +1387,6 @@ def render_bootstrap_calculator():
 # =============================================================================
 #  FULL VALUATION (UPDATED)
 # =============================================================================
-# (The render_full_valuation function has been replaced with the latest version
-#  that uses the loss_component_engine and conditional discounting uploads.
-#  It appears exactly as defined in the answer above.)
 
 def render_full_valuation():
     show_breadcrumb()
@@ -1449,7 +1446,14 @@ def render_full_valuation():
             policy_file = st.file_uploader("3. Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol")
         with c2:
             cashflows_file = st.file_uploader("2. Cashflows (Group, Premiums_Received, IACF_Paid, Investment_Components_Paid)", type=["csv","xlsx"], key="fv_cf")
-            claims_curve_file = st.file_uploader("6. Claims Curve (Period, Percentage) – Optional", type=["csv","xlsx"], key="fv_cc")
+            # Claims curve – only shown when Emergence of Risk is selected
+            if revenue_toggle == "Emergence of Risk":
+                claims_curve_file = st.file_uploader(
+                    "6. Claims Curve (Period, Percentage) – Optional",
+                    type=["csv","xlsx"], key="fv_cc"
+                )
+            else:
+                claims_curve_file = None
         
         # Discounting data – only when toggled on
         yield_curve_df = None
