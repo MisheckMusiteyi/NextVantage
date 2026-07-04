@@ -23,6 +23,7 @@ import importlib.util
 import glob
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
@@ -60,7 +61,7 @@ mack_engine = import_file_glob("LIC_Calculators/RA_Calculators/mack_ra.py")
 bootstrap_engine = import_file_glob("LIC_Calculators/RA_Calculators/bootstrap_ra.py")
 engine_utils = import_file_glob("utils/actuarial_engine_utils.py")
 
-# --- Load Full Valuation engine (for Full IFRS 17 Valuation mode) ---
+# --- Load Full Valuation engine ---
 full_engine = None
 for pattern in ["Full_Valuation/full_LRC_IFRS17.py", "Full_Valuation/*.py"]:
     full_engine = import_file_glob(pattern)
@@ -95,15 +96,18 @@ module_status = {
     "Engine Utils": engine_utils,
     "Full Valuation": full_engine,
 }
+
 critical_modules = ["UPR Engine", "OCR Engine", "Engine Utils"]
 missing_critical = [name for name in critical_modules if module_status[name] is None]
+
 if missing_critical:
     st.error("Critical Error: Essential modules could not be loaded.")
     for mod in missing_critical:
         st.error(f"  - {mod}")
     st.stop()
 
-missing_optional = [name for name, mod in module_status.items() if mod is None and name not in critical_modules]
+missing_optional = [name for name, mod in module_status.items() 
+                    if mod is None and name not in critical_modules]
 if missing_optional:
     with st.sidebar.expander("Module Status", expanded=False):
         st.warning("Some optional modules could not be loaded:")
@@ -129,7 +133,9 @@ with st.sidebar.expander("Debug Info", expanded=False):
 def _date_filter(df, col, from_date, to_date):
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
         df[col] = pd.to_datetime(df[col], errors='coerce')
-    return df[(df[col] >= pd.Timestamp(from_date)) & (df[col] <= pd.Timestamp(to_date))]
+    fd = pd.Timestamp(from_date)
+    td = pd.Timestamp(to_date)
+    return df[(df[col] >= fd) & (df[col] <= td)]
 
 def periods_per_year(grain):
     return {"Y": 1, "Q": 4, "M": 12}[grain]
@@ -147,9 +153,13 @@ def map_columns(df, required_fields, prefix):
         mapping[field] = st.selectbox(f"{field}", cols, index=default_idx, key=f"{prefix}_{field}")
     return mapping
 
+# =============================================================================
+#  INFLATION & DISCOUNTING UI HELPERS
+# =============================================================================
+
 def load_inflation_data_ui(grain_code, ppy, page_key):
     st.markdown("**Inflation Adjustment**")
-    inf_file = st.file_uploader("Upload Inflation Curve (Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{page_key}")
+    inf_file = st.file_uploader("Upload Inflation Curve (CSV/Excel: Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{page_key}")
     cum_inflation = None
     per_period_rates = None
     if inf_file:
@@ -172,25 +182,25 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
             annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
             per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
             cum_inflation = np.cumprod(1 + per_period_rates)
-            st.success("Inflation curve loaded.")
+            st.success("Inflation curve loaded and interpolated.")
         except Exception as e:
-            st.error(f"Inflation error: {e}")
+            st.error(f"Inflation data error: {e}")
     return cum_inflation, per_period_rates
 
 def load_discounting_data_ui(grain_code, ppy, page_key):
     st.markdown("**Discounting**")
-    disc_method = st.radio("Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
+    disc_method = st.radio("Discounting Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
     spot_rates = None
     flat_rate = None
     if disc_method == "Yield Curve":
-        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
+        yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel: Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
         if yc_file:
             try:
                 yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
                 yc_df.columns = yc_df.columns.astype(str).str.strip()
                 c1, c2 = st.columns(2)
                 with c1: m_col = st.selectbox("Duration Column", yc_df.columns, key=f"yc_m_{page_key}")
-                with c2: r_col = st.selectbox("Rate Column (%)", yc_df.columns, key=f"yc_r_{page_key}")
+                with c2: r_col = st.selectbox("Spot Rate Column (%)", yc_df.columns, key=f"yc_r_{page_key}")
                 yc_df = yc_df[[m_col, r_col]].dropna()
                 yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
                 yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
@@ -201,7 +211,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
                     f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
                 period_maturities = np.arange(1, 61) / ppy
                 spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
-                st.success("Yield curve loaded.")
+                st.success("Yield curve loaded and interpolated.")
             except Exception as e:
                 st.error(f"Yield curve error: {e}")
     elif disc_method == "Single Flat Rate":
@@ -265,7 +275,7 @@ def back_button(target_page, target_breadcrumb):
 
 
 # =============================================================================
-#  NAVIGATION PAGES (unchanged)
+#  NAVIGATION PAGES
 # =============================================================================
 
 def render_home():
@@ -381,7 +391,7 @@ def render_risk_adjustment():
 
 
 # =============================================================================
-#  INDIVIDUAL CALCULATORS (identical to the previously working versions)
+#  INDIVIDUAL CALCULATORS
 # =============================================================================
 
 def render_upr_calculator():
@@ -1042,10 +1052,6 @@ def render_npr_calculator():
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# =============================================================================
-#  MACK & BOOTSTRAP (unchanged)
-# =============================================================================
-
 def run_mack_calculation(triangle, confidence, z_score, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
     with st.spinner("Calculating Mack Chain Ladder..."):
         n_ay, n_dev = triangle.shape
@@ -1406,9 +1412,6 @@ def render_full_valuation():
             st.session_state.report_metadata['prepared_by'] = prepared_by
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # --- Mode Selection ---
-    mode = st.radio("Valuation Mode", ["Full Valuation (IFRS 17 Engine)", "Simple PAA (UPR Rollforward)"], key="fv_mode")
-    
     st.markdown("### Configuration")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1427,243 +1430,177 @@ def render_full_valuation():
         'revenue_toggle': revenue_toggle
     }
     
-    if mode == "Full Valuation (IFRS 17 Engine)":
-        st.markdown("### Upload Files")
-        c1, c2 = st.columns(2)
-        with c1:
-            opening_file = st.file_uploader("1. Opening Balances (Group, Opening_LRC_Excl_Loss, Opening_Loss_Component)", type=["csv","xlsx"], key="fv_ob")
-            policy_file = st.file_uploader("3. Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol")
-        with c2:
-            cashflows_file = st.file_uploader("2. Cashflows (Group, Premiums_Received, IACF_Paid, Investment_Components_Paid)", type=["csv","xlsx"], key="fv_cf")
-            if revenue_toggle == "Emergence of Risk":
-                claims_curve_file = st.file_uploader("6. Claims Curve (Period, Percentage) – Optional", type=["csv","xlsx"], key="fv_cc")
-            else:
-                claims_curve_file = None
-        
-        # Discounting data – only when toggled on
-        yield_curve_df = None
-        if discount_toggle == "Apply Discounting":
-            st.markdown("#### Discounting Data (Yield Curve)")
-            yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx"], key="fv_yc_disc")
-            if yc_file is not None:
-                try:
-                    yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
-                    yc_df.columns = yc_df.columns.astype(str).str.strip()
-                    st.markdown("**Yield Curve Column Mapping:**")
-                    yc_map = map_columns(yc_df, ['Duration_Years', 'Spot_Rate'], 'fv_yc')
-                    yield_curve_df = yc_df.rename(columns={v: k for k, v in yc_map.items()})
-                except Exception as e:
-                    st.error(f"Yield curve error: {e}")
-        
-        # Loss Component – always via engine
-        st.markdown("#### Loss Component (computed via engine)")
-        lc_data_file = st.file_uploader(
-            "Upload Loss Component Input Data (LOB, Written Premium, Expenses, Commission, Paid Claims, Opening/Closing OCR, IBNR, UPR, RA)",
-            type=["csv","xlsx","xls"], key="fv_lc_data"
-        )
-        loss_comp_df = None
-        lc_computed = False
-        
-        if lc_data_file is not None:
-            try:
-                lc_raw = pd.read_csv(lc_data_file) if lc_data_file.name.endswith('.csv') else pd.read_excel(lc_data_file)
-                lc_raw.columns = lc_raw.columns.astype(str).str.strip()
-                st.dataframe(lc_raw.head(3), use_container_width=True)
-                
-                cols = lc_raw.columns.tolist()
-                st.markdown("**Loss Component Column Mapping:**")
-                c1,c2,c3 = st.columns(3)
-                with c1:
-                    lob_col = st.selectbox("Line of Business", cols, key="fv_lc_lob")
-                    opening_ocr_col = st.selectbox("Opening OCR", cols, key="fv_lc_oocr")
-                    opening_ibnr_col = st.selectbox("Opening IBNR", cols, key="fv_lc_oibnr")
-                with c2:
-                    wp_col = st.selectbox("Written Premium", cols, key="fv_lc_wp")
-                    closing_ocr_col = st.selectbox("Closing OCR", cols, key="fv_lc_cocr")
-                    closing_ibnr_col = st.selectbox("Closing IBNR", cols, key="fv_lc_cibnr")
-                with c3:
-                    commission_col = st.selectbox("Commission Paid", cols, key="fv_lc_comm")
-                    paid_claims_col = st.selectbox("Paid Claims", cols, key="fv_lc_pc")
-                    ra_col = st.selectbox("Risk Adjustment", cols, key="fv_lc_ra")
-                c1,c2 = st.columns(2)
-                with c1:
-                    expenses_col = st.selectbox("Expenses", cols, key="fv_lc_exp")
-                with c2:
-                    opening_upr_col = st.selectbox("Opening UPR", cols, key="fv_lc_oupr")
-                closing_upr_col = st.selectbox("Closing UPR", cols, key="fv_lc_cupr")
-                
-                if st.button("Compute Loss Component", key="fv_lc_calc"):
-                    if loss_comp_engine is None:
-                        st.error("Loss Component engine not available.")
-                    else:
-                        lc_result = loss_comp_engine.calculate_loss_component(
-                            df=lc_raw, lob_col=lob_col, written_premium_col=wp_col,
-                            expenses_col=expenses_col, commission_col=commission_col,
-                            paid_claims_col=paid_claims_col,
-                            opening_ocr_col=opening_ocr_col, closing_ocr_col=closing_ocr_col,
-                            opening_ibnr_col=opening_ibnr_col, closing_ibnr_col=closing_ibnr_col,
-                            opening_upr_col=opening_upr_col, closing_upr_col=closing_upr_col,
-                            risk_adjustment_col=ra_col
-                        )
-                        st.session_state['lc_computed'] = lc_result
-                        lc_computed = True
-                        st.success("Loss Component computed. Ready for valuation.")
-                        st.dataframe(lc_result)
-            except Exception as e:
-                st.error(f"Loss Component error: {e}")
-        
-        # Required files: opening, cashflows, policy, loss component input
-        required = [opening_file, cashflows_file, policy_file, lc_data_file]
-        if all(f is not None for f in required):
-            try:
-                opening_df = pd.read_csv(opening_file) if opening_file.name.endswith('.csv') else pd.read_excel(opening_file)
-                opening_df.columns = opening_df.columns.astype(str).str.strip()
-                cashflows_df = pd.read_csv(cashflows_file) if cashflows_file.name.endswith('.csv') else pd.read_excel(cashflows_file)
-                cashflows_df.columns = cashflows_df.columns.astype(str).str.strip()
-                policy_df = pd.read_csv(policy_file) if policy_file.name.endswith('.csv') else pd.read_excel(policy_file)
-                policy_df.columns = policy_df.columns.astype(str).str.strip()
-                
-                st.markdown("### Column Mapping")
-                st.markdown("**Opening Balances:**")
-                ob_map = map_columns(opening_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'fv_ob')
-                opening_df = opening_df.rename(columns={v:k for k,v in ob_map.items()})
-                st.markdown("**Cashflows:**")
-                cf_map = map_columns(cashflows_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'fv_cf')
-                cashflows_df = cashflows_df.rename(columns={v:k for k,v in cf_map.items()})
-                st.markdown("**Policy Data:**")
-                pol_map = map_columns(policy_df, ['Group','Start_Date','End_Date','Written_Premium'], 'fv_pol')
-                policy_df = policy_df.rename(columns={v:k for k,v in pol_map.items()})
-                
-                # Build loss_comp_df from computed result + expected future premiums
-                if not lc_computed and 'lc_computed' not in st.session_state:
-                    st.warning("Please compute the Loss Component first.")
-                    return
-                lc_res = st.session_state.get('lc_computed')
-                st.markdown("**Expected Future Premiums** – required for full valuation.")
-                efp_file = st.file_uploader("Upload Expected Future Premiums (Group, Amount)", type=["csv","xlsx"], key="fv_efp")
-                if efp_file is None:
-                    st.info("Upload the Expected Future Premiums file to proceed.")
-                    return
-                efp_df = pd.read_csv(efp_file) if efp_file.name.endswith('.csv') else pd.read_excel(efp_file)
-                efp_df.columns = efp_df.columns.astype(str).str.strip()
-                efp_map = map_columns(efp_df, ['Group','Expected_Future_Premiums'], 'fv_efp')
-                efp_df = efp_df.rename(columns={v:k for k,v in efp_map.items()})
-                
-                # Merge with lc_res (which used lob_col as key)
-                lc_res = lc_res.rename(columns={lob_col: 'Group'})
-                lc_res = lc_res[['Group','Loss_Ratio','Commission_Ratio','Expense_Ratio','Risk_Adjustment_Ratio']]
-                lc_res = lc_res.rename(columns={'Risk_Adjustment_Ratio':'RA_Ratio'})
-                loss_comp_df = lc_res.merge(efp_df, on='Group')
-                
-                # Claims curve (optional)
-                claims_curve_df = None
-                if claims_curve_file is not None:
-                    cc_df = pd.read_csv(claims_curve_file) if claims_curve_file.name.endswith('.csv') else pd.read_excel(claims_curve_file)
-                    cc_df.columns = cc_df.columns.astype(str).str.strip()
-                    cc_map = map_columns(cc_df, ['Period','Percentage'], 'fv_cc')
-                    claims_curve_df = cc_df.rename(columns={v:k for k,v in cc_map.items()})
-                
-                valuation_date = st.session_state.report_metadata.get('val_date', date(2025,12,31))
-                
-                if st.button("Run Full Valuation", key="fv_run", use_container_width=True):
-                    with st.spinner("Running IFRS 17 Valuation..."):
-                        results = full_engine.calculate_full_ifrs17_lrc(
-                            opening_balances_df=opening_df,
-                            cashflows_df=cashflows_df,
-                            policy_df=policy_df,
-                            loss_component_df=loss_comp_df,
-                            yield_curve_df=yield_curve_df,
-                            claims_curve_df=claims_curve_df,
-                            config=config,
-                            valuation_date=valuation_date
-                        )
-                    st.markdown("### Valuation Results by Group")
-                    for group, data in results.items():
-                        with st.expander(f"Group: {group}", expanded=True):
-                            c1,c2,c3 = st.columns(3)
-                            with c1:
-                                st.metric("Opening LRC (excl. Loss)", f"{data['Opening_LRC_Excl_Loss']:,.2f}")
-                                st.metric("Premiums Received", f"{data['Premiums_Received']:,.2f}")
-                                st.metric("Insurance Revenue", f"{data['Insurance_Revenue']:,.2f}")
-                            with c2:
-                                st.metric("Opening Loss Component", f"{data['Opening_Loss_Component']:,.2f}")
-                                st.metric("IACF Paid", f"{data['IACF_Paid']:,.2f}")
-                                st.metric("IACF Amortized", f"{data['IACF_Amortized']:,.2f}")
-                            with c3:
-                                st.metric("Closing LRC (excl. Loss)", f"{data['Closing_LRC_Excl_Loss']:,.2f}")
-                                st.metric("Closing Loss Component", f"{data['Closing_Loss_Component']:,.2f}")
-                                st.metric("Total Closing LRC", f"{data['Total_Closing_LRC']:,.2f}")
-                            st.markdown(f"**Combined Ratio:** {data.get('Combined_Ratio',0):.2%} | **UPR Snapshot:** {data.get('UPR_Snapshot',0):,.2f}")
-            except Exception as e:
-                st.error(f"Error: {e}")
-                with st.expander("Details"): import traceback; st.code(traceback.format_exc())
-        else:
-            st.info("Please upload all required files.")
+    st.markdown("### Upload Files")
     
-    else:  # Simple PAA (UPR Rollforward) – unchanged
-        c1, c2 = st.columns(2)
-        with c1:
-            policy_file = st.file_uploader("Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol_simple")
-            opening_file = st.file_uploader("Opening Balances (Optional)", type=["csv","xlsx"], key="fv_ob_simple")
-        with c2:
-            cashflows_file = st.file_uploader("Cashflows (Optional)", type=["csv","xlsx"], key="fv_cf_simple")
-        
-        if policy_file is not None:
-            try:
-                policy_df = pd.read_csv(policy_file) if policy_file.name.endswith('.csv') else pd.read_excel(policy_file)
-                policy_df.columns = policy_df.columns.astype(str).str.strip()
-                opening_df = pd.DataFrame(columns=['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'])
-                cashflows_df = pd.DataFrame(columns=['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'])
-                
-                st.markdown("### Column Mapping")
-                st.markdown("**Policy Data:**")
-                pol_map = map_columns(policy_df, ['Group','Start_Date','End_Date','Written_Premium'], 'fv_pol_s')
-                policy_df = policy_df.rename(columns={v:k for k,v in pol_map.items()})
-                if opening_file is not None:
-                    opening_df = pd.read_csv(opening_file) if opening_file.name.endswith('.csv') else pd.read_excel(opening_file)
-                    opening_df.columns = opening_df.columns.astype(str).str.strip()
-                    ob_map = map_columns(opening_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'fv_ob_s')
-                    opening_df = opening_df.rename(columns={v:k for k,v in ob_map.items()})
-                if cashflows_file is not None:
-                    cashflows_df = pd.read_csv(cashflows_file) if cashflows_file.name.endswith('.csv') else pd.read_excel(cashflows_file)
-                    cashflows_df.columns = cashflows_df.columns.astype(str).str.strip()
-                    cf_map = map_columns(cashflows_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'fv_cf_s')
-                    cashflows_df = cashflows_df.rename(columns={v:k for k,v in cf_map.items()})
-                
-                valuation_date = st.session_state.report_metadata.get('val_date', date(2025,12,31))
-                if st.button("Run Simple PAA Valuation", key="fv_run_simple", use_container_width=True):
-                    with st.spinner("Running..."):
-                        results = full_engine.calculate_full_ifrs17_lrc(
-                            opening_balances_df=opening_df,
-                            cashflows_df=cashflows_df,
-                            policy_df=policy_df,
-                            loss_component_df=pd.DataFrame(columns=['Group','Expected_Future_Premiums','Loss_Ratio','Commission_Ratio','Expense_Ratio','RA_Ratio']),
-                            yield_curve_df=None,
-                            claims_curve_df=None,
-                            config=config,
-                            valuation_date=valuation_date
-                        )
-                    st.markdown("### Valuation Results by Group")
-                    for group, data in results.items():
-                        with st.expander(f"Group: {group}", expanded=True):
-                            c1,c2,c3 = st.columns(3)
-                            with c1:
-                                st.metric("Opening LRC (excl. Loss)", f"{data['Opening_LRC_Excl_Loss']:,.2f}")
-                                st.metric("Premiums Received", f"{data['Premiums_Received']:,.2f}")
-                                st.metric("Insurance Revenue", f"{data['Insurance_Revenue']:,.2f}")
-                            with c2:
-                                st.metric("Opening Loss Component", f"{data['Opening_Loss_Component']:,.2f}")
-                                st.metric("IACF Paid", f"{data['IACF_Paid']:,.2f}")
-                                st.metric("IACF Amortized", f"{data['IACF_Amortized']:,.2f}")
-                            with c3:
-                                st.metric("Closing LRC (excl. Loss)", f"{data['Closing_LRC_Excl_Loss']:,.2f}")
-                                st.metric("Closing Loss Component", f"{data['Closing_Loss_Component']:,.2f}")
-                                st.metric("Total Closing LRC", f"{data['Total_Closing_LRC']:,.2f}")
-                            st.markdown(f"**Combined Ratio:** {data.get('Combined_Ratio',0):.2%} | **UPR Snapshot:** {data.get('UPR_Snapshot',0):,.2f}")
-            except Exception as e:
-                st.error(f"Error: {e}")
+    c1, c2 = st.columns(2)
+    with c1:
+        opening_file = st.file_uploader("1. Opening Balances (Group, Opening_LRC_Excl_Loss, Opening_Loss_Component)", type=["csv","xlsx"], key="fv_ob")
+        policy_file = st.file_uploader("3. Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol")
+    with c2:
+        cashflows_file = st.file_uploader("2. Cashflows (Group, Premiums_Received, IACF_Paid, Investment_Components_Paid)", type=["csv","xlsx"], key="fv_cf")
+        if revenue_toggle == "Emergence of Risk":
+            claims_curve_file = st.file_uploader("6. Claims Curve (Period, Percentage) – Optional", type=["csv","xlsx"], key="fv_cc")
         else:
-            st.info("Please upload the policy data file.")
+            claims_curve_file = None
+    
+    # Discounting data – only when toggled on
+    yield_curve_df = None
+    if discount_toggle == "Apply Discounting":
+        st.markdown("#### Discounting Data (Yield Curve)")
+        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx"], key="fv_yc_disc")
+        if yc_file is not None:
+            try:
+                yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
+                yc_df.columns = yc_df.columns.astype(str).str.strip()
+                st.markdown("**Yield Curve Column Mapping:**")
+                yc_map = map_columns(yc_df, ['Duration_Years', 'Spot_Rate'], 'fv_yc')
+                yield_curve_df = yc_df.rename(columns={v: k for k, v in yc_map.items()})
+            except Exception as e:
+                st.error(f"Yield curve error: {e}")
+    
+    # Loss Component – always via engine
+    st.markdown("#### Loss Component (computed via engine)")
+    lc_data_file = st.file_uploader(
+        "Upload Loss Component Input Data (LOB, Written Premium, Expenses, Commission, Paid Claims, Opening/Closing OCR, IBNR, UPR, RA)",
+        type=["csv","xlsx","xls"], key="fv_lc_data"
+    )
+    loss_comp_df = None
+    lc_computed = False
+    
+    if lc_data_file is not None:
+        try:
+            lc_raw = pd.read_csv(lc_data_file) if lc_data_file.name.endswith('.csv') else pd.read_excel(lc_data_file)
+            lc_raw.columns = lc_raw.columns.astype(str).str.strip()
+            st.dataframe(lc_raw.head(3), use_container_width=True)
+            
+            cols = lc_raw.columns.tolist()
+            st.markdown("**Loss Component Column Mapping:**")
+            c1,c2,c3 = st.columns(3)
+            with c1:
+                lob_col = st.selectbox("Line of Business", cols, key="fv_lc_lob")
+                opening_ocr_col = st.selectbox("Opening OCR", cols, key="fv_lc_oocr")
+                opening_ibnr_col = st.selectbox("Opening IBNR", cols, key="fv_lc_oibnr")
+            with c2:
+                wp_col = st.selectbox("Written Premium", cols, key="fv_lc_wp")
+                closing_ocr_col = st.selectbox("Closing OCR", cols, key="fv_lc_cocr")
+                closing_ibnr_col = st.selectbox("Closing IBNR", cols, key="fv_lc_cibnr")
+            with c3:
+                commission_col = st.selectbox("Commission Paid", cols, key="fv_lc_comm")
+                paid_claims_col = st.selectbox("Paid Claims", cols, key="fv_lc_pc")
+                ra_col = st.selectbox("Risk Adjustment", cols, key="fv_lc_ra")
+            c1,c2 = st.columns(2)
+            with c1:
+                expenses_col = st.selectbox("Expenses", cols, key="fv_lc_exp")
+            with c2:
+                opening_upr_col = st.selectbox("Opening UPR", cols, key="fv_lc_oupr")
+            closing_upr_col = st.selectbox("Closing UPR", cols, key="fv_lc_cupr")
+            
+            if st.button("Compute Loss Component", key="fv_lc_calc"):
+                if loss_comp_engine is None:
+                    st.error("Loss Component engine not available.")
+                else:
+                    lc_result = loss_comp_engine.calculate_loss_component(
+                        df=lc_raw, lob_col=lob_col, written_premium_col=wp_col,
+                        expenses_col=expenses_col, commission_col=commission_col,
+                        paid_claims_col=paid_claims_col,
+                        opening_ocr_col=opening_ocr_col, closing_ocr_col=closing_ocr_col,
+                        opening_ibnr_col=opening_ibnr_col, closing_ibnr_col=closing_ibnr_col,
+                        opening_upr_col=opening_upr_col, closing_upr_col=closing_upr_col,
+                        risk_adjustment_col=ra_col
+                    )
+                    st.session_state['lc_computed'] = lc_result
+                    lc_computed = True
+                    st.success("Loss Component computed. Ready for valuation.")
+                    st.dataframe(lc_result)
+        except Exception as e:
+            st.error(f"Loss Component error: {e}")
+    
+    required = [opening_file, cashflows_file, policy_file, lc_data_file]
+    if all(f is not None for f in required):
+        try:
+            opening_df = pd.read_csv(opening_file) if opening_file.name.endswith('.csv') else pd.read_excel(opening_file)
+            opening_df.columns = opening_df.columns.astype(str).str.strip()
+            cashflows_df = pd.read_csv(cashflows_file) if cashflows_file.name.endswith('.csv') else pd.read_excel(cashflows_file)
+            cashflows_df.columns = cashflows_df.columns.astype(str).str.strip()
+            policy_df = pd.read_csv(policy_file) if policy_file.name.endswith('.csv') else pd.read_excel(policy_file)
+            policy_df.columns = policy_df.columns.astype(str).str.strip()
+            
+            st.markdown("### Column Mapping")
+            st.markdown("**Opening Balances:**")
+            ob_map = map_columns(opening_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'fv_ob')
+            opening_df = opening_df.rename(columns={v:k for k,v in ob_map.items()})
+            st.markdown("**Cashflows:**")
+            cf_map = map_columns(cashflows_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'fv_cf')
+            cashflows_df = cashflows_df.rename(columns={v:k for k,v in cf_map.items()})
+            st.markdown("**Policy Data:**")
+            pol_map = map_columns(policy_df, ['Group','Start_Date','End_Date','Written_Premium'], 'fv_pol')
+            policy_df = policy_df.rename(columns={v:k for k,v in pol_map.items()})
+            
+            # Build loss_comp_df from computed result + expected future premiums
+            if not lc_computed and 'lc_computed' not in st.session_state:
+                st.warning("Please compute the Loss Component first.")
+                return
+            lc_res = st.session_state.get('lc_computed')
+            st.markdown("**Expected Future Premiums** – required for full valuation.")
+            efp_file = st.file_uploader("Upload Expected Future Premiums (Group, Amount)", type=["csv","xlsx"], key="fv_efp")
+            if efp_file is None:
+                st.info("Upload the Expected Future Premiums file to proceed.")
+                return
+            efp_df = pd.read_csv(efp_file) if efp_file.name.endswith('.csv') else pd.read_excel(efp_file)
+            efp_df.columns = efp_df.columns.astype(str).str.strip()
+            efp_map = map_columns(efp_df, ['Group','Expected_Future_Premiums'], 'fv_efp')
+            efp_df = efp_df.rename(columns={v:k for k,v in efp_map.items()})
+            
+            # Merge with lc_res (which used lob_col as key)
+            lc_res = lc_res.rename(columns={lob_col: 'Group'})
+            lc_res = lc_res[['Group','Loss_Ratio','Commission_Ratio','Expense_Ratio','Risk_Adjustment_Ratio']]
+            lc_res = lc_res.rename(columns={'Risk_Adjustment_Ratio':'RA_Ratio'})
+            loss_comp_df = lc_res.merge(efp_df, on='Group')
+            
+            # Claims curve (optional)
+            claims_curve_df = None
+            if claims_curve_file is not None:
+                cc_df = pd.read_csv(claims_curve_file) if claims_curve_file.name.endswith('.csv') else pd.read_excel(claims_curve_file)
+                cc_df.columns = cc_df.columns.astype(str).str.strip()
+                cc_map = map_columns(cc_df, ['Period','Percentage'], 'fv_cc')
+                claims_curve_df = cc_df.rename(columns={v:k for k,v in cc_map.items()})
+            
+            valuation_date = st.session_state.report_metadata.get('val_date', date(2025,12,31))
+            
+            if st.button("Run Full Valuation", key="fv_run", use_container_width=True):
+                with st.spinner("Running IFRS 17 Valuation..."):
+                    results = full_engine.calculate_full_ifrs17_lrc(
+                        opening_balances_df=opening_df,
+                        cashflows_df=cashflows_df,
+                        policy_df=policy_df,
+                        loss_component_df=loss_comp_df,
+                        yield_curve_df=yield_curve_df,
+                        claims_curve_df=claims_curve_df,
+                        config=config,
+                        valuation_date=valuation_date
+                    )
+                st.markdown("### Valuation Results by Group")
+                for group, data in results.items():
+                    with st.expander(f"Group: {group}", expanded=True):
+                        c1,c2,c3 = st.columns(3)
+                        with c1:
+                            st.metric("Opening LRC (excl. Loss)", f"{data['Opening_LRC_Excl_Loss']:,.2f}")
+                            st.metric("Premiums Received", f"{data['Premiums_Received']:,.2f}")
+                            st.metric("Insurance Revenue", f"{data['Insurance_Revenue']:,.2f}")
+                        with c2:
+                            st.metric("Opening Loss Component", f"{data['Opening_Loss_Component']:,.2f}")
+                            st.metric("IACF Paid", f"{data['IACF_Paid']:,.2f}")
+                            st.metric("IACF Amortized", f"{data['IACF_Amortized']:,.2f}")
+                        with c3:
+                            st.metric("Closing LRC (excl. Loss)", f"{data['Closing_LRC_Excl_Loss']:,.2f}")
+                            st.metric("Closing Loss Component", f"{data['Closing_Loss_Component']:,.2f}")
+                            st.metric("Total Closing LRC", f"{data['Total_Closing_LRC']:,.2f}")
+                        st.markdown(f"**Combined Ratio:** {data.get('Combined_Ratio',0):.2%} | **UPR Snapshot:** {data.get('UPR_Snapshot',0):,.2f}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+            with st.expander("Details"): import traceback; st.code(traceback.format_exc())
+    else:
+        st.info("Please upload all required files (Opening Balances, Cashflows, Policy, Loss Component Input).")
     
     back_button('home', ['Home'])
 
