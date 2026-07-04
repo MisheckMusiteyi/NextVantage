@@ -227,25 +227,122 @@ st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", i
 
 st.markdown("""
 <style>
-    .stApp { background-color: #FFFFFF; color: #000000; font-family: 'Calisto MT', 'Georgia', serif; font-size: 11pt; }
-    h1, h2, h3, h4, h5, h6, p, div, span, label { font-family: 'Calisto MT', 'Georgia', serif !important; }
+    /* ---- Global box model & typography reset ----
+       box-sizing:border-box on every element stops padding/border from
+       silently expanding elements past their container (the #1 cause of
+       text spilling over card/button edges and overlapping neighbours). */
+    *, *::before, *::after { box-sizing: border-box !important; }
+
+    .stApp { background-color: #FFFFFF; color: #000000; font-family: 'Calisto MT', 'Georgia', serif; font-size: 11pt; line-height: 1.5; }
+    h1, h2, h3, h4, h5, h6, p, div, span, label {
+        font-family: 'Calisto MT', 'Georgia', serif !important;
+        line-height: 1.45;
+        overflow-wrap: break-word;
+        word-break: break-word;
+    }
+
+    /* ---- Hero banner ---- */
     .hero { background: linear-gradient(135deg, #000000 0%, #1a1a2e 100%); color: #FFFFFF; padding: 2.5rem 2rem; text-align: center; border-bottom: 3px solid #4A90D9; margin-bottom: 2rem; }
-    .hero h1 { color: #4A90D9; font-size: 2.5rem; margin-bottom: 0.5rem; }
-    .hero p { font-size: 1.1rem; max-width: 800px; margin: 0 auto; }
-    .card { background-color: #F9F9F9; border: 2px solid #4A90D9; border-radius: 10px; padding: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1.5rem; text-align: center; min-height: 150px; display: flex; flex-direction: column; justify-content: center; }
-    .card h3 { color: #4A90D9; margin-top: 0; font-size: 1.1rem; }
-    .card p { font-size: 0.9rem; color: #555; }
-    .breadcrumb { background-color: #F0F0F0; padding: 0.5rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; border-left: 4px solid #4A90D9; }
+    .hero h1 { color: #4A90D9; font-size: 2.5rem; margin: 0 0 0.5rem 0; line-height: 1.2; }
+    .hero p { font-size: 1.1rem; max-width: 800px; margin: 0 auto; line-height: 1.5; }
+
+    /* ---- Equal-height card rows ----
+       Streamlit renders each st.columns() cell independently, so a card's
+       companion button used to land at a different vertical position in
+       every column whenever the card text was a different length. Forcing
+       the row and its columns to stretch, then letting the card grow to
+       fill the column, keeps every card AND every button perfectly
+       aligned across the row regardless of text length. */
+    div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
+    div[data-testid="column"] { display: flex !important; flex-direction: column !important; }
+    div[data-testid="column"] > div[data-testid="stVerticalBlock"] { display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; }
+
+    .card {
+        background-color: #F9F9F9;
+        border: 2px solid #4A90D9;
+        border-radius: 10px;
+        padding: 1.25rem 1.25rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+        text-align: center;
+        min-height: 150px;
+        flex: 1 1 auto;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        gap: 0.4rem;
+        overflow: hidden;
+    }
+    .card h3 { color: #4A90D9; margin: 0; font-size: 1.1rem; line-height: 1.3; width: 100%; }
+    .card p { font-size: 0.9rem; color: #555; margin: 0; line-height: 1.4; width: 100%; }
+    .status-badge {
+        display: inline-block;
+        margin-top: 0.35rem;
+        padding: 0.15rem 0.7rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: bold;
+        line-height: 1.6;
+    }
+    .status-badge.available { background-color: #DFF3E3; color: #1E7B34; }
+    .status-badge.unavailable { background-color: #F5DADA; color: #A32626; }
+
+    /* ---- Breadcrumb ---- */
+    .breadcrumb { background-color: #F0F0F0; padding: 0.5rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; border-left: 4px solid #4A90D9; line-height: 1.6; }
     .breadcrumb span { color: #4A90D9; font-weight: bold; }
-    .stButton > button { background-color: #4A90D9 !important; color: #FFFFFF !important; border: none !important; border-radius: 6px !important; font-weight: bold !important; padding: 0.6rem 1.2rem !important; width: 100% !important; font-family: 'Calisto MT', 'Georgia', serif !important; }
+
+    /* ---- Buttons ----
+       min-height + normal white-space + line-height stop longer button
+       labels from being clipped, squashed, or overlapping the button's
+       own padding on narrower screens. */
+    .stButton > button {
+        background-color: #4A90D9 !important;
+        color: #FFFFFF !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: bold !important;
+        padding: 0.6rem 1rem !important;
+        width: 100% !important;
+        min-height: 46px;
+        line-height: 1.3 !important;
+        white-space: normal !important;
+        font-family: 'Calisto MT', 'Georgia', serif !important;
+    }
     .stButton > button:hover { background-color: #357ABD !important; color: #FFFFFF !important; }
     .stButton > button:disabled { background-color: #CCCCCC !important; color: #888888 !important; }
+    .stButton { margin-top: auto; }
+
     .section-container { background-color: #F9F9F9; border: 2px solid #4A90D9; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
     .section-container h3 { color: #4A90D9; margin-top: 0; }
     .stFileUploader { border: 2px dashed #4A90D9 !important; border-radius: 10px !important; padding: 1rem !important; }
+
     .report-meta { background-color: #F0F4F8; border: 2px solid #4A90D9; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
-    .report-meta td { padding: 2px 8px; }
-    .footer { background-color: #000000; color: #FFFFFF; text-align: center; padding: 1.5rem; border-top: 3px solid #4A90D9; margin-top: 3rem; font-size: 0.9rem; }
+    .report-meta td { padding: 4px 8px; line-height: 1.4; }
+    .footer { background-color: #000000; color: #FFFFFF; text-align: center; padding: 1.5rem; border-top: 3px solid #4A90D9; margin-top: 3rem; font-size: 0.9rem; line-height: 1.4; }
+
+    /* ---- Built-in Streamlit widgets ----
+       These override Streamlit's own sizing just enough so the custom
+       serif font (which is wider than the default) doesn't push labels
+       and values into each other inside metrics, selects, and inputs. */
+    div[data-testid="stMetric"] { padding: 0.5rem 0.75rem; }
+    div[data-testid="stMetricLabel"] { white-space: normal !important; line-height: 1.3 !important; }
+    div[data-testid="stMetricValue"] { line-height: 1.3 !important; overflow-wrap: break-word; font-size: 1.6rem !important; }
+    div[data-testid="stMetricDelta"] { line-height: 1.3 !important; }
+
+    .stSelectbox label, .stMultiSelect label, .stTextInput label,
+    .stNumberInput label, .stDateInput label, .stRadio label,
+    .stCheckbox label, .stFileUploader label {
+        line-height: 1.4 !important;
+        overflow-wrap: break-word;
+        margin-bottom: 0.25rem !important;
+    }
+    div[data-baseweb="select"] { line-height: 1.4 !important; }
+    div[data-baseweb="select"] > div { min-height: 42px; }
+
+    /* Dataframes / tables: keep long header text from overlapping cells */
+    div[data-testid="stDataFrame"] * { line-height: 1.4 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -342,8 +439,9 @@ def render_fulfilment_cashflows():
     for i, (title, page, module, desc) in enumerate(items):
         with cols[i]:
             available = module is not None
+            status_class = "available" if available else "unavailable"
             status_text = "Available" if available else "Unavailable"
-            st.markdown(f'<div class="card"><h3>{title}</h3><p>{desc}</p><p>{status_text}</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><h3>{title}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
             if st.button(f"Open {title}", key=f"nav_fcf_{page}", disabled=not available, use_container_width=True):
                 navigate_to(page, ['Home', 'LIC Calculators', 'Fulfilment Cashflows', title])
     back_button('lic', ['Home', 'LIC Calculators'])
@@ -365,8 +463,9 @@ def render_ibnr_menu():
                 name, page, module, desc = methods[i + j]
                 with cols[j]:
                     available = module is not None
+                    status_class = "available" if available else "unavailable"
                     status_text = "Available" if available else "Unavailable"
-                    st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><p>{status_text}</p></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
                     if st.button(f"Open {name}", key=f"nav_ibnr_{page}", disabled=not available, use_container_width=True):
                         navigate_to(page, ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods', name])
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
@@ -383,8 +482,9 @@ def render_risk_adjustment():
     for i, (name, page, module, desc) in enumerate(methods):
         with cols[i]:
             available = module is not None
+            status_class = "available" if available else "unavailable"
             status_text = "Available" if available else "Unavailable"
-            st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><p>{status_text}</p></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
             if st.button(f"Open {name}", key=f"nav_ra_{page}", disabled=not available, use_container_width=True):
                 navigate_to(page, ['Home', 'LIC Calculators', 'Risk Adjustment', name])
     back_button('lic', ['Home', 'LIC Calculators'])
