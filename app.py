@@ -26,7 +26,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-# Dictionary to capture any import error – only shown in the sidebar expander
 _IMPORT_ERRORS = {}
 
 def import_file_glob(relative_pattern):
@@ -47,7 +46,6 @@ def import_file_glob(relative_pattern):
             return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        # Success – remove any previous error for this pattern
         _IMPORT_ERRORS.pop(relative_pattern, None)
         return module
     except Exception as e:
@@ -69,17 +67,13 @@ mack_engine = import_file_glob("LIC_Calculators/RA_Calculators/mack_ra.py")
 bootstrap_engine = import_file_glob("LIC_Calculators/RA_Calculators/bootstrap_ra.py")
 engine_utils = import_file_glob("utils/actuarial_engine_utils.py")
 
-# --- Load Full Valuation engine (multiple patterns, clean up errors on success) ---
+# --- Load Full Valuation engine ---
 full_engine = None
-for pattern in ["Full_Valuation/full_lrc_ifrs17.py",           # exact lowercase name
-                "Full_Valuation/full_LRC_IFRS17.py",           # original mixed case
-                "Full_Valuation/*.py"]:
+for pattern in ["Full_Valuation/full_lrc_ifrs17.py", "Full_Valuation/full_LRC_IFRS17.py", "Full_Valuation/*.py"]:
     full_engine = import_file_glob(pattern)
     if full_engine is not None:
         break
-
 if full_engine is None:
-    # Direct import fallback
     fv_path = os.path.join(BASE_DIR, "Full_Valuation", "full_lrc_ifrs17.py")
     if os.path.exists(fv_path):
         try:
@@ -89,8 +83,6 @@ if full_engine is None:
                 spec.loader.exec_module(full_engine)
         except Exception:
             pass
-
-# Once we have the engine, clear all Full_Valuation related import errors
 if full_engine is not None:
     keys_to_pop = [k for k in _IMPORT_ERRORS if "Full_Valuation" in k]
     for k in keys_to_pop:
@@ -100,21 +92,12 @@ if full_engine is not None:
 #  MODULE STATUS CHECK
 # =============================================================================
 module_status = {
-    "UPR Engine": upr_engine,
-    "Loss Component Engine": loss_comp_engine,
-    "OCR Engine": ocr_engine,
-    "Percentage IBNR": ibnr_pct,
-    "BCL IBNR": ibnr_bcl,
-    "Cape Cod IBNR": ibnr_cc,
-    "BF IBNR": ibnr_bf,
-    "ULAE Engine": ulae_engine,
-    "NPR Engine": npr_engine,
-    "Mack RA": mack_engine,
-    "Bootstrap RA": bootstrap_engine,
-    "Engine Utils": engine_utils,
-    "Full Valuation": full_engine,
+    "UPR Engine": upr_engine, "Loss Component Engine": loss_comp_engine, "OCR Engine": ocr_engine,
+    "Percentage IBNR": ibnr_pct, "BCL IBNR": ibnr_bcl, "Cape Cod IBNR": ibnr_cc,
+    "BF IBNR": ibnr_bf, "ULAE Engine": ulae_engine, "NPR Engine": npr_engine,
+    "Mack RA": mack_engine, "Bootstrap RA": bootstrap_engine,
+    "Engine Utils": engine_utils, "Full Valuation": full_engine,
 }
-
 critical_modules = ["UPR Engine", "OCR Engine", "Engine Utils"]
 missing_critical = [name for name in critical_modules if module_status[name] is None]
 if missing_critical:
@@ -123,10 +106,7 @@ if missing_critical:
         st.error(f"  - {mod}")
     st.stop()
 
-missing_optional = [name for name, mod in module_status.items() 
-                    if mod is None and name not in critical_modules]
-
-# ----- Diagnostic display: ONLY in the sidebar expander, never as a main-page error -----
+missing_optional = [name for name, mod in module_status.items() if mod is None and name not in critical_modules]
 if missing_optional or _IMPORT_ERRORS:
     with st.sidebar.expander("Module Status", expanded=False):
         if missing_optional:
@@ -142,12 +122,10 @@ if missing_optional or _IMPORT_ERRORS:
 # =============================================================================
 #  UTILITY FUNCTIONS
 # =============================================================================
-
 def _date_filter(df, col, from_date, to_date):
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
         df[col] = pd.to_datetime(df[col], errors='coerce')
-    fd = pd.Timestamp(from_date)
-    td = pd.Timestamp(to_date)
+    fd = pd.Timestamp(from_date); td = pd.Timestamp(to_date)
     return df[(df[col] >= fd) & (df[col] <= td)]
 
 def periods_per_year(grain):
@@ -166,17 +144,11 @@ def map_columns(df, required_fields, prefix):
         mapping[field] = st.selectbox(f"{field}", cols, index=default_idx, key=f"{prefix}_{field}")
     return mapping
 
-# =============================================================================
-#  CACHED / MEMORY-OPTIMIZED FILE LOADING
-# =============================================================================
-
 def _optimize_dtypes(df, category_threshold=0.5, category_max_unique=10000):
     for col in df.columns:
         dtype = df[col].dtype
-        if pd.api.types.is_float_dtype(dtype):
-            df[col] = pd.to_numeric(df[col], downcast='float')
-        elif pd.api.types.is_integer_dtype(dtype):
-            df[col] = pd.to_numeric(df[col], downcast='integer')
+        if pd.api.types.is_float_dtype(dtype): df[col] = pd.to_numeric(df[col], downcast='float')
+        elif pd.api.types.is_integer_dtype(dtype): df[col] = pd.to_numeric(df[col], downcast='integer')
         elif dtype == object:
             n_total = len(df[col])
             if n_total > 0:
@@ -190,11 +162,9 @@ def read_uploaded_file(uploaded_file, optimize=True):
     name = uploaded_file.name
     df = pd.read_csv(uploaded_file) if name.endswith('.csv') else pd.read_excel(uploaded_file)
     unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
-    if unnamed:
-        df = df.drop(columns=unnamed)
+    if unnamed: df = df.drop(columns=unnamed)
     df.columns = df.columns.astype(str).str.strip()
-    if optimize:
-        df = _optimize_dtypes(df)
+    if optimize: df = _optimize_dtypes(df)
     return df
 
 @st.cache_data(show_spinner=False)
@@ -221,15 +191,10 @@ def build_download_payload(sheets: dict, row_threshold: int = 100_000):
         output.seek(0)
         return output, "zip", "application/zip"
 
-# =============================================================================
-#  INFLATION & DISCOUNTING UI HELPERS
-# =============================================================================
-
 def load_inflation_data_ui(grain_code, ppy, page_key):
     st.markdown("**Inflation Adjustment**")
     inf_file = st.file_uploader("Upload Inflation Curve (CSV/Excel: Period, Rate %)", type=["csv","xlsx","xls"], key=f"inf_{page_key}")
-    cum_inflation = None
-    per_period_rates = None
+    cum_inflation = None; per_period_rates = None
     if inf_file:
         try:
             inf_df = read_uploaded_file(inf_file)
@@ -243,29 +208,24 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
             ratio = ppy / periods_per_year(grain_code)
             x_inf = np.arange(len(rates_inf)) * ratio
             x_tgt = np.arange(int(x_inf[-1]) + 1) if len(x_inf) > 0 else np.array([0])
-            if len(x_inf) >= 4:
-                f_interp = interpolate.CubicSpline(x_inf, rates_inf, extrapolate=True)
-            else:
-                f_interp = interpolate.interp1d(x_inf, rates_inf, kind='linear', fill_value='extrapolate')
+            if len(x_inf) >= 4: f_interp = interpolate.CubicSpline(x_inf, rates_inf, extrapolate=True)
+            else: f_interp = interpolate.interp1d(x_inf, rates_inf, kind='linear', fill_value='extrapolate')
             annual_rates_tgt = np.clip(f_interp(x_tgt), -0.5, 2.0)
             per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
             cum_inflation = np.cumprod(1 + per_period_rates)
             st.success("Inflation curve loaded and interpolated.")
-        except Exception as e:
-            st.error(f"Inflation data error: {e}")
+        except Exception as e: st.error(f"Inflation data error: {e}")
     return cum_inflation, per_period_rates
 
 def load_discounting_data_ui(grain_code, ppy, page_key):
     st.markdown("**Discounting**")
     disc_method = st.radio("Discounting Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
-    spot_rates = None
-    flat_rate = None
+    spot_rates = None; flat_rate = None
     if disc_method == "Yield Curve":
         yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel: Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
         if yc_file:
             try:
-                yc_df = read_uploaded_file(yc_file)
-                yc_df.columns = yc_df.columns.astype(str).str.strip()
+                yc_df = read_uploaded_file(yc_file); yc_df.columns = yc_df.columns.astype(str).str.strip()
                 c1, c2 = st.columns(2)
                 with c1: m_col = st.selectbox("Duration Column", yc_df.columns, key=f"yc_m_{page_key}")
                 with c2: r_col = st.selectbox("Spot Rate Column (%)", yc_df.columns, key=f"yc_r_{page_key}")
@@ -273,15 +233,12 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
                 yc_df[m_col] = pd.to_numeric(yc_df[m_col], errors='coerce')
                 yc_df[r_col] = pd.to_numeric(yc_df[r_col], errors='coerce') / 100.0
                 maturities = yc_df[m_col].values; rates = yc_df[r_col].values
-                if len(maturities) >= 4:
-                    f_interp = interpolate.CubicSpline(maturities, rates, extrapolate=True)
-                else:
-                    f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
+                if len(maturities) >= 4: f_interp = interpolate.CubicSpline(maturities, rates, extrapolate=True)
+                else: f_interp = interpolate.interp1d(maturities, rates, kind='linear', fill_value='extrapolate')
                 period_maturities = np.arange(1, 61) / ppy
                 spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
                 st.success("Yield curve loaded and interpolated.")
-            except Exception as e:
-                st.error(f"Yield curve error: {e}")
+            except Exception as e: st.error(f"Yield curve error: {e}")
     elif disc_method == "Single Flat Rate":
         flat_rate = st.number_input("Annual Discount Rate (%)", 0.0, 50.0, 5.0, 0.5, key=f"flat_{page_key}") / 100.0
     return spot_rates, flat_rate
@@ -290,9 +247,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
 # =============================================================================
 #  STREAMLIT CONFIGURATION
 # =============================================================================
-
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
-
 st.markdown("""
 <style>
     *, *::before, *::after { box-sizing: border-box !important; }
@@ -303,9 +258,7 @@ st.markdown("""
     .stApp { background-color: #FFFFFF; color: #000000; font-family: 'Calisto MT', 'Georgia', serif; font-size: 11pt; line-height: 1.5; }
     h1, h2, h3, h4, h5, h6, p, div, span, label {
         font-family: 'Calisto MT', 'Georgia', serif !important;
-        line-height: 1.45;
-        overflow-wrap: break-word;
-        word-break: break-word;
+        line-height: 1.45; overflow-wrap: break-word; word-break: break-word;
     }
     .hero { background: linear-gradient(135deg, #000000 0%, #1a1a2e 100%); color: #FFFFFF; padding: 2.5rem 2rem; text-align: center; border-bottom: 3px solid #4A90D9; margin-bottom: 2rem; }
     .hero h1 { color: #4A90D9; font-size: 2.5rem; margin: 0 0 0.5rem 0; line-height: 1.2; }
@@ -362,7 +315,6 @@ st.markdown("""
 # =============================================================================
 #  SESSION STATE & NAVIGATION
 # =============================================================================
-
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'breadcrumb' not in st.session_state: st.session_state.breadcrumb = ['Home']
 if 'report_metadata' not in st.session_state: st.session_state.report_metadata = {}
@@ -384,9 +336,8 @@ def back_button(target_page, target_breadcrumb):
 
 
 # =============================================================================
-#  NAVIGATION PAGES (unchanged)
+#  NAVIGATION PAGES
 # =============================================================================
-
 def render_home():
     st.markdown('<div class="hero"><h1>Next Vantage</h1><p>Comprehensive Actuarial Reserving Toolkit - IFRS 17 Compliant<br>African Actuarial Consultants</p></div>', unsafe_allow_html=True)
     st.markdown("### Select a Module")
@@ -406,7 +357,6 @@ def render_home():
             navigate_to('lic', ['Home', 'LIC Calculators'])
     st.markdown('<div class="footer">2025 Next Vantage - African Actuarial Consultants. All rights reserved.</div>', unsafe_allow_html=True)
 
-
 def render_lrc():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>LRC Calculators</h1><p>Liability for Remaining Coverage - IFRS 17 PAA</p></div>', unsafe_allow_html=True)
@@ -422,7 +372,6 @@ def render_lrc():
             navigate_to('loss_component', ['Home', 'LRC Calculators', 'Loss Component'])
     back_button('home', ['Home'])
 
-
 def render_lic():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>LIC Calculators</h1><p>Liability for Incurred Claims</p></div>', unsafe_allow_html=True)
@@ -437,69 +386,49 @@ def render_lic():
             navigate_to('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
     back_button('home', ['Home'])
 
-
 def render_fulfilment_cashflows():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Fulfilment Cashflows</h1><p>Components of LIC</p></div>', unsafe_allow_html=True)
     cols = st.columns(4)
-    items = [
-        ("OCR", "ocr_calculator", ocr_engine, "Outstanding Claims Reserve"),
-        ("IBNR", "ibnr_menu", True, "4 Methods: Percentage, BCL, Cape Cod, BF"),
-        ("ULAE", "ulae_calculator", ulae_engine, "Unallocated Loss Adjustment Expenses"),
-        ("NPR", "npr_calculator", npr_engine, "Reinsurance Non-Performance Risk"),
-    ]
-    for i, (title, page, module, desc) in enumerate(items):
+    items = [("OCR", "ocr_calculator", ocr_engine), ("IBNR", "ibnr_menu", True),
+             ("ULAE", "ulae_calculator", ulae_engine), ("NPR", "npr_calculator", npr_engine)]
+    for i, (title, page, module) in enumerate(items):
         with cols[i]:
             available = module is not None
-            status_class = "available" if available else "unavailable"
-            status_text = "Available" if available else "Unavailable"
-            st.markdown(f'<div class="card"><h3>{title}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><h3>{title}</h3><p>{"Available" if available else "Unavailable"}</p></div>', unsafe_allow_html=True)
             if st.button(f"Open {title}", key=f"nav_fcf_{page}", disabled=not available, use_container_width=True):
                 navigate_to(page, ['Home', 'LIC Calculators', 'Fulfilment Cashflows', title])
     back_button('lic', ['Home', 'LIC Calculators'])
 
-
 def render_ibnr_menu():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>IBNR Methods</h1><p>Select a calculation method</p></div>', unsafe_allow_html=True)
-    methods = [
-        ("Percentage Method", "percentage_calculator", ibnr_pct, "Simple: IBNR = Amount x IBNR%"),
-        ("Basic Chain Ladder", "bcl_calculator", ibnr_bcl, "Multi-LDF with inflation & discounting"),
-        ("Cape Cod", "capecod_calculator", ibnr_cc, "Uses premiums to derive expected loss ratio"),
-        ("Bornhuetter-Ferguson", "bf_calculator", ibnr_bf, "Blends Chain Ladder with expected loss ratio"),
-    ]
+    methods = [("Percentage", "percentage_calculator", ibnr_pct), ("BCL", "bcl_calculator", ibnr_bcl),
+               ("Cape Cod", "capecod_calculator", ibnr_cc), ("Bornhuetter-Ferguson", "bf_calculator", ibnr_bf)]
     for i in range(0, len(methods), 2):
         cols = st.columns(2)
         for j in range(2):
             if i + j < len(methods):
-                name, page, module, desc = methods[i + j]
+                name, page, module = methods[i + j]
                 with cols[j]:
                     available = module is not None
-                    status_class = "available" if available else "unavailable"
-                    status_text = "Available" if available else "Unavailable"
-                    st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="card"><h3>{name}</h3><p>{"Available" if available else "Unavailable"}</p></div>', unsafe_allow_html=True)
                     if st.button(f"Open {name}", key=f"nav_ibnr_{page}", disabled=not available, use_container_width=True):
-                        navigate_to(page, ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods', name])
+                        navigate_to(page, ['Home', 'LIC', 'Fulfilment Cashflows', 'IBNR Methods', name])
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
-
 
 def render_risk_adjustment():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Risk Adjustment</h1><p>RA Methods for IFRS 17</p></div>', unsafe_allow_html=True)
     cols = st.columns(2)
-    methods = [
-        ("Mack Chain Ladder", "mack_calculator", mack_engine, "Distribution-free standard error of IBNR (Mack 1993)"),
-        ("ODP Bootstrap", "bootstrap_calculator", bootstrap_engine, "England & Verrall bootstrap with process variance"),
-    ]
-    for i, (name, page, module, desc) in enumerate(methods):
+    methods = [("Mack", "mack_calculator", mack_engine), ("Bootstrap", "bootstrap_calculator", bootstrap_engine)]
+    for i, (name, page, module) in enumerate(methods):
         with cols[i]:
             available = module is not None
-            status_class = "available" if available else "unavailable"
-            status_text = "Available" if available else "Unavailable"
-            st.markdown(f'<div class="card"><h3>{name}</h3><p>{desc}</p><span class="status-badge {status_class}">{status_text}</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="card"><h3>{name}</h3><p>{"Available" if available else "Unavailable"}</p></div>', unsafe_allow_html=True)
             if st.button(f"Open {name}", key=f"nav_ra_{page}", disabled=not available, use_container_width=True):
-                navigate_to(page, ['Home', 'LIC Calculators', 'Risk Adjustment', name])
-    back_button('lic', ['Home', 'LIC Calculators'])
+                navigate_to(page, ['Home', 'LIC', 'Risk Adjustment', name])
+    back_button('lic', ['Home', 'LIC'])
 
 
 # =============================================================================
@@ -818,7 +747,7 @@ def render_bcl_calculator():
 
 
 # =============================================================================
-#  CAPE COD — updated with wide‑format premiums & period validation, LOB filtering
+#  CAPE COD — with per-LOB premium mapping, count-only validation
 # =============================================================================
 
 def render_capecod_calculator():
@@ -846,26 +775,28 @@ def render_capecod_calculator():
         amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="cc_amt")
         if not amount_cols: st.warning("Please select at least one Amount column."); return
 
-        # Extract unique LOBs from claims data BEFORE showing premium mapping
         df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
         for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
-        lobs = sorted(df[lob_col].dropna().unique())   # <-- unique LOB list
+        lobs = sorted(df[lob_col].dropna().unique())   # unique LOBs from claims
 
-        # ---- Wide premiums mapping ----
+        # Premium mapping
         p_cols = prem_df.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1:
-            prem_period_col = st.selectbox("Development Period Column", p_cols, key="cc_prem_period")
-        with c2:
-            # Only show columns that match (case-insensitively) the claims LOBs
-            lob_candidates = [c for c in p_cols if c != prem_period_col
-                              and any(c.strip().lower() == lob.strip().lower() for lob in lobs)]
-            if not lob_candidates:
-                st.warning("No premium columns matched the LOBs found in claims data.")
-            selected_lob_cols = st.multiselect("LOB Premium Columns (one per LOB)", lob_candidates, key="cc_prem_lobs")
+        prem_period_col = st.selectbox("Development Period Column", p_cols, key="cc_prem_period")
+        avail_cols = [c for c in p_cols if c != prem_period_col]
+        if len(avail_cols) < len(lobs):
+            st.error(f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).")
+            return
+        # Map each claims LOB to a premium column
+        lob_mapping = {}
+        st.markdown("**Map each Line of Business to a premium column:**")
+        for lob in lobs:
+            options = ["None"] + avail_cols
+            default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
+            idx = options.index(default) if default in options else 0
+            lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"cc_map_{lob}")
 
         grain = "Y"; ppy = 1; n_periods = to_dt.year - from_dt.year + 1
         st.markdown("### LDF Method Selection")
@@ -907,31 +838,19 @@ def render_capecod_calculator():
                 all_results = []
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    # Extract premiums for this LOB from wide file
+                    # Extract premiums for this LOB
                     prems = [1.0] * n_periods
-                    if prem_period_col and selected_lob_cols:
-                        lob_col_name = None
-                        for col in selected_lob_cols:
-                            if col.strip().lower() == lob.strip().lower():
-                                lob_col_name = col
-                                break
-                        if lob_col_name is not None:
-                            lob_prem = prem_df[[prem_period_col, lob_col_name]].copy()
-                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                            lob_prem[lob_col_name] = pd.to_numeric(lob_prem[lob_col_name], errors='coerce').fillna(0)
-                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                            lob_prem = lob_prem.sort_values(prem_period_col)
-                            # Validate periods match the accident years
-                            required_years = list(range(from_dt.year, from_dt.year + n_periods))
-                            prem_years = lob_prem[prem_period_col].astype(int).tolist()
-                            if prem_years != required_years:
-                                st.error(
-                                    f"Premium periods for LOB '{lob}' do not match the triangle accident years.\n"
-                                    f"Required years: {required_years}\n"
-                                    f"Provided years: {prem_years}"
-                                )
-                                return
-                            prems = lob_prem[lob_col_name].tolist()
+                    prem_col = lob_mapping.get(lob, "None")
+                    if prem_col != "None":
+                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
+                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
+                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                        lob_prem = lob_prem.sort_values(prem_period_col)
+                        if len(lob_prem) != n_periods:
+                            st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
+                            return
+                        prems = lob_prem[prem_col].tolist()
                     for ac in amount_cols:
                         _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         try:
@@ -967,7 +886,7 @@ def render_capecod_calculator():
 
 
 # =============================================================================
-#  BF — updated with wide‑format premiums & period validation, LOB filtering
+#  BF — with per-LOB premium mapping, count-only validation
 # =============================================================================
 
 def render_bf_calculator():
@@ -997,24 +916,25 @@ def render_bf_calculator():
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
-        lobs = sorted(df[lob_col].dropna().unique())   # <-- unique LOB list
+        lobs = sorted(df[lob_col].dropna().unique())
 
-        prem_df = None; prem_period_col = None; selected_lob_cols = []
+        prem_df = None; prem_period_col = None; lob_mapping = {}
         if prem_file is not None:
             prem_df = read_uploaded_file(prem_file)
             prem_df.columns = prem_df.columns.astype(str).str.strip()
             st.dataframe(prem_df.head(3), use_container_width=True)
             p_cols = prem_df.columns.tolist()
-            c1, c2 = st.columns(2)
-            with c1:
-                prem_period_col = st.selectbox("Development Period Column", p_cols, key="bf_prem_period")
-            with c2:
-                # Only show columns that match (case-insensitively) the claims LOBs
-                lob_candidates = [c for c in p_cols if c != prem_period_col
-                                  and any(c.strip().lower() == lob.strip().lower() for lob in lobs)]
-                if not lob_candidates:
-                    st.warning("No premium columns matched the LOBs found in claims data.")
-                selected_lob_cols = st.multiselect("LOB Premium Columns (one per LOB)", lob_candidates, key="bf_prem_lobs")
+            prem_period_col = st.selectbox("Development Period Column", p_cols, key="bf_prem_period")
+            avail_cols = [c for c in p_cols if c != prem_period_col]
+            if len(avail_cols) < len(lobs):
+                st.error(f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).")
+                return
+            st.markdown("**Map each Line of Business to a premium column:**")
+            for lob in lobs:
+                options = ["None"] + avail_cols
+                default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
+                idx = options.index(default) if default in options else 0
+                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"bf_map_{lob}")
 
         st.markdown("### Expected Loss Ratios (ELR) per LOB")
         elr_cols = st.columns(min(len(lobs), 4))
@@ -1062,28 +982,17 @@ def render_bf_calculator():
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
                     prems = [1.0] * n_periods
-                    if prem_file is not None and prem_period_col and selected_lob_cols:
-                        lob_col_name = None
-                        for col in selected_lob_cols:
-                            if col.strip().lower() == lob.strip().lower():
-                                lob_col_name = col
-                                break
-                        if lob_col_name is not None:
-                            lob_prem = prem_df[[prem_period_col, lob_col_name]].copy()
-                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                            lob_prem[lob_col_name] = pd.to_numeric(lob_prem[lob_col_name], errors='coerce').fillna(0)
-                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                            lob_prem = lob_prem.sort_values(prem_period_col)
-                            required_years = list(range(from_dt.year, from_dt.year + n_periods))
-                            prem_years = lob_prem[prem_period_col].astype(int).tolist()
-                            if prem_years != required_years:
-                                st.error(
-                                    f"Premium periods for LOB '{lob}' do not match the triangle accident years.\n"
-                                    f"Required years: {required_years}\n"
-                                    f"Provided years: {prem_years}"
-                                )
-                                return
-                            prems = lob_prem[lob_col_name].tolist()
+                    prem_col = lob_mapping.get(lob, "None") if prem_file is not None else "None"
+                    if prem_col != "None":
+                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
+                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
+                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                        lob_prem = lob_prem.sort_values(prem_period_col)
+                        if len(lob_prem) != n_periods:
+                            st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
+                            return
+                        prems = lob_prem[prem_col].tolist()
                     for ac in amount_cols:
                         _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         try:
