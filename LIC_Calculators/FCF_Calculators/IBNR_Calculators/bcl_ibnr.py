@@ -3,13 +3,25 @@
 #  BASIC CHAIN LADDER (BCL) IBNR ENGINE
 #  Multi-LDF, Inflation, Discounting Support
 #  Tail factor hardcoded to 1.000 (fully developed)
+#
+#  FIXES APPLIED:
+#   1. Nominal completed triangle for discounting is now built cell-by-cell
+#      via build_nominal_triangle_for_discounting (each future increment
+#      reinflated to its own calendar period), replacing the old placeholder
+#      that was NaN for nearly every accident period.
+#   2. Ultimate_Claims / Current_Claims / IBNR are now kept on a consistent
+#      basis (nominal) whenever inflation is on, so Ultimate = Current + IBNR
+#      reconciles in the output table.
+#   3. Floor of 0.0 applied consistently to IBNR regardless of whether
+#      inflation is on.
 # =============================================================================
 
 import pandas as pd
 import numpy as np
 from utils.actuarial_engine_utils import (
     period_label, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle
+    reinflate_ibnr_per_ap, discount_completed_triangle,
+    build_nominal_triangle_for_discounting
 )
 
 def calculate_all_ldfs(cum, n_dp):
@@ -71,7 +83,7 @@ def calculate_all_ldfs(cum, n_dp):
 
     return ldfs
 
-def calculate_bcl_ibnr(cum_triangle, start_date, period_unit, 
+def calculate_bcl_ibnr(cum_triangle, start_date, period_unit,
                        selected_ldf_method="volume_weighted",
                        use_inflation=False, cum_inflation=None, per_period_rates=None,
                        use_discounting=False, spot_rates=None, flat_rate=None):
@@ -102,13 +114,12 @@ def calculate_bcl_ibnr(cum_triangle, start_date, period_unit,
     # 5. Re-inflate the projected payments (to nominal) if required
     if use_inflation and per_period_rates is not None:
         nominal_map = reinflate_ibnr_per_ap(completed_real, working_cum, n_ap, per_period_rates)
-        # Build nominal completed triangle for discounting
-        completed_nominal = completed_real.copy()
-        for ap in range(n_ap):
-            for dp in range(n_dp):
-                if ap + dp >= n_ap: # Future periods
-                    if nominal_map.get(ap) is not None:
-                        completed_nominal.iloc[ap, dp] = nominal_map[ap] + working_cum.iloc[ap, n_dp-1] # Placeholder for distribution
+        # FIX: build the nominal completed triangle cell-by-cell (each real
+        # increment reinflated to its own calendar period), instead of the
+        # old flat/NaN placeholder. Needed for correct discounting below.
+        completed_nominal = build_nominal_triangle_for_discounting(
+            completed_real, cum_triangle, n_ap, per_period_rates
+        )
     else:
         nominal_map = None
         completed_nominal = completed_real
@@ -131,12 +142,18 @@ def calculate_bcl_ibnr(cum_triangle, start_date, period_unit,
         if last_obs < 0: continue
 
         current = cum_triangle.iloc[i, last_obs]
-        ultimate = completed_real.iloc[i, n_dp - 1]
+
         if nominal_map is not None and i in nominal_map:
-            ibnr = nominal_map[i]
+            # FIX: keep Current / Ultimate / IBNR on a consistent (nominal)
+            # basis so Ultimate == Current + IBNR reconciles in the report,
+            # instead of reporting a real-basis Ultimate alongside a
+            # nominal Current and nominal IBNR.
+            ibnr = max(nominal_map[i], 0.0)
+            ultimate = current + ibnr
         else:
+            ultimate = completed_real.iloc[i, n_dp - 1]
             ibnr = max(ultimate - current, 0.0)
-        
+
         total_ibnr += ibnr
         rows.append({
             'Accident_Period': i,
