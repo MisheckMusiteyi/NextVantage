@@ -3,13 +3,25 @@
 #  BORNHUETTER-FERGUSON IBNR ENGINE
 #  Multi-LDF, Inflation, Discounting Support
 #  Tail factor hardcoded to 1.000 (fully developed)
+#
+#  FIXES APPLIED:
+#   1. Premiums are now deflated per-accident-period (deflate_premiums),
+#      instead of one blanket factor applied to every accident period.
+#   2. Reinflation and discounting now operate on a BF-SPECIFIC real
+#      emergence pattern (build_real_emergence_triangle, scaled to each
+#      AP's own expected_ultimate_real), instead of silently substituting
+#      the plain chain-ladder completed_real triangle.
+#   3. Discounting now reinflates to nominal first (build_nominal_triangle
+#      _for_discounting) before calling discount_completed_triangle, so
+#      cash flows and discount rates are on a consistent (nominal) basis.
 # =============================================================================
 
 import pandas as pd
 import numpy as np
 from utils.actuarial_engine_utils import (
     period_label, project_ultimate, deflate_triangle_to_real,
-    reinflate_ibnr_per_ap, discount_completed_triangle
+    deflate_premiums, reinflate_ibnr_per_ap, discount_completed_triangle,
+    build_real_emergence_triangle, build_nominal_triangle_for_discounting
 )
 
 def calculate_all_ldfs(cum, n_dp):
@@ -80,7 +92,7 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
                      use_discounting=False, spot_rates=None, flat_rate=None):
     """
     Calculate BF IBNR with multi-LDF, inflation, and discounting support.
-    
+
     Parameters:
     -----------
     cum_triangle : pd.DataFrame
@@ -94,7 +106,7 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
     period_unit : str
         'Y', 'Q', or 'M'
     selected_ldf_method : str
-        One of: volume_weighted, simple_average, geometric, medial, 
+        One of: volume_weighted, simple_average, geometric, medial,
         linear_regression, weighted_last_3
     use_inflation : bool
         Whether to apply inflation adjustment
@@ -108,7 +120,7 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
         Spot rates for discounting
     flat_rate : float or None
         Flat discount rate
-    
+
     Returns:
     --------
     dict with:
@@ -126,8 +138,10 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
     if use_inflation and cum_inflation is not None:
         inc = cum_triangle.diff(axis=1).fillna(cum_triangle.iloc[:, 0]).fillna(0)
         _, working_cum = deflate_triangle_to_real(inc, cum_inflation, n_ap)
-        deflation_factor = cum_inflation[n_ap - 1] / cum_inflation[0] if cum_inflation[0] > 0 else 1.0
-        working_premiums = [p / deflation_factor for p in premiums]
+        # FIX: deflate premiums per-accident-period (matching how the claims
+        # triangle is deflated cell-by-cell), instead of one blanket factor
+        # (cum_inflation[n_ap-1] / cum_inflation[0]) applied to every AP.
+        working_premiums = deflate_premiums(premiums, cum_inflation, n_ap)
     else:
         working_cum = cum_triangle.copy()
         working_premiums = premiums
@@ -135,19 +149,22 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
     # 2. Calculate LDFs using selected method
     all_ldfs = calculate_all_ldfs(working_cum, n_dp)
     factors = all_ldfs[selected_ldf_method]
-    completed_real = project_ultimate(working_cum, factors)
+    completed_real = project_ultimate(working_cum, factors)  # plain chain-ladder pattern (LDF display only)
 
-    # 3. Compute CDFs and percentage unpaid
+    # 3. Compute CDFs and percentage unpaid / developed
     cdfs = []
     run = 1.0
     for f in reversed(factors):
         run *= f
         cdfs.insert(0, run)
     pct_unpaid = [1 - (1 / cdf) if cdf > 0 else 0 for cdf in cdfs]
+    pct_developed = [1 / cdf if cdf > 0 else 1.0 for cdf in cdfs]
 
     # 4. Calculate BF IBNR on real basis
     rows = []
-    total_ibnr_real = 0.0
+    # NOTE: this holds each AP's BF ULTIMATE ESTIMATE (current + IBNR),
+    # not the raw premium*ELR expected ultimate -- see fix note below.
+    bf_ultimate_real_list = [0.0] * n_ap
     for i in range(n_ap):
         last_obs = -1
         for j in range(n_dp - 1, -1, -1):
@@ -163,13 +180,23 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
         if last_obs < len(pct_unpaid):
             pct_unpaid_val = pct_unpaid[last_obs]
             cdf_val = cdfs[last_obs] if last_obs < len(cdfs) else 1.0
-            bf_ibnr_real = expected_ultimate_real * pct_unpaid_val
+            bf_ibnr_real = max(expected_ultimate_real * pct_unpaid_val, 0.0)
         else:
             pct_unpaid_val = 0
             cdf_val = 1.0
             bf_ibnr_real = 0
 
-        total_ibnr_real += bf_ibnr_real
+        # FIX: the BF ultimate estimate is current + IBNR, NOT the raw
+        # premium*ELR expected_ultimate_real. Feeding the raw expected
+        # ultimate into the emergence-pattern builder as the terminal
+        # value can produce a NON-monotonic "completed" real triangle
+        # whenever expected_ultimate_real < current (which BF allows,
+        # since it's exactly the point of blending paid-to-date with
+        # the a-priori expectation) -- i.e. cumulative values that
+        # decrease from one development period to the next, which then
+        # corrupts reinflation/discounting downstream.
+        bf_ultimate_real_list[i] = current + bf_ibnr_real
+
         rows.append({
             'Accident_Period': i,
             'Accident_Period_Label': period_label(i, start_date, period_unit),
@@ -183,19 +210,39 @@ def calculate_bf_ibnr(cum_triangle, premiums, elr, start_date, period_unit,
             'Selected_LDF_Method': selected_ldf_method
         })
 
-    # 5. Re-inflate Real IBNR to Nominal
+    # 4b. Build the BF-SPECIFIC real emergence pattern (scaled to each AP's
+    # own BF ULTIMATE ESTIMATE -- current + IBNR -- via the LDF-implied
+    # %-developed shape), to be used for reinflation and discounting below
+    # -- NOT the generic chain-ladder completed_real triangle from step 2,
+    # and NOT the raw premium*ELR expected ultimate (see fix note above).
+    completed_bf_real = build_real_emergence_triangle(
+        working_cum, bf_ultimate_real_list, pct_developed, n_ap
+    )
+
+    # 5. Re-inflate Real IBNR to Nominal, using BF's own emergence pattern
     if use_inflation and per_period_rates is not None:
-        nominal_map = reinflate_ibnr_per_ap(completed_real, working_cum, n_ap, per_period_rates)
+        nominal_map = reinflate_ibnr_per_ap(completed_bf_real, working_cum, n_ap, per_period_rates)
         for i, row in enumerate(rows):
-            row['BF_IBNR'] = nominal_map.get(i, row['BF_IBNR_Real'])
+            row['BF_IBNR'] = max(nominal_map.get(row['Accident_Period'], row['BF_IBNR_Real']), 0.0)
     else:
+        nominal_map = None
         for i, row in enumerate(rows):
             row['BF_IBNR'] = row['BF_IBNR_Real']
 
-    # 6. Discount nominal IBNR if required
+    # 6. Discount if required. Build a proper nominal triangle first so
+    # cash flows and discount rates are on a consistent basis, instead of
+    # discounting real (deflated) cash flows with presumably-nominal rates.
     if use_discounting:
+        if use_inflation and per_period_rates is not None:
+            completed_nominal_for_disc = build_nominal_triangle_for_discounting(
+                completed_bf_real, cum_triangle, n_ap, per_period_rates
+            )
+            cum_for_disc = cum_triangle
+        else:
+            completed_nominal_for_disc = completed_bf_real
+            cum_for_disc = working_cum
         _, total_ibnr_disc = discount_completed_triangle(
-            completed_real, working_cum, n_ap, period_unit, spot_rates, flat_rate
+            completed_nominal_for_disc, cum_for_disc, n_ap, period_unit, spot_rates, flat_rate
         )
     else:
         total_ibnr_disc = None
