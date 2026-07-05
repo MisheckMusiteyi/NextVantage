@@ -47,7 +47,7 @@ def build_triangles(df, loss_col, report_col, amount_col, origin, grain, n_perio
     )
     df = df[(df["__ap"] >= 0) & (df["__ap"] < n_periods)]
     df_valid = df.dropna(subset=[amount_col])
-    
+
     if len(df_valid) > 0:
         pivot = df_valid.pivot_table(index="__ap", columns="__dp", values=amount_col, aggfunc="sum")
     else:
@@ -155,6 +155,84 @@ def deflate_triangle_to_real(inc, cum_inflation, n_periods):
                 real_cum.loc[ap, dp] = np.nan
     return real_inc, real_cum
 
+def deflate_premiums(premiums, cum_inflation, n_periods):
+    """
+    Deflate each accident period's premium to valuation-date real terms.
+
+    FIX (was): a single blanket factor cum_inflation[n_ap-1] / cum_inflation[0]
+    was applied to every accident period, which is only correct for ap=0.
+    Every other accident period's premium was over-deflated.
+
+    NOW: mirrors deflate_triangle_to_real's per-cell convention -- premium
+    for accident period `ap` is treated as occurring at calendar time t=ap
+    (written/earned at the start of that accident period, consistent with
+    how the dp=0 cell of the claims triangle is deflated), and is deflated
+    using the inflation index at that specific time.
+    """
+    valuation_idx = n_periods - 1
+    if len(cum_inflation) <= valuation_idx:
+        cum_inflation = np.append(
+            cum_inflation, [cum_inflation[-1]] * (valuation_idx - len(cum_inflation) + 1)
+        )
+    inf_val = cum_inflation[valuation_idx]
+
+    working_premiums = []
+    for ap, p in enumerate(premiums):
+        inf_t = cum_inflation[min(ap, len(cum_inflation) - 1)]
+        working_premiums.append(p * (inf_val / inf_t) if inf_t > 0 else p)
+    return working_premiums
+
+def build_real_emergence_triangle(cum_triangle_real, expected_ultimate_real, pct_developed, n_periods):
+    """
+    Build a full real "completed" cumulative triangle for BF / Cape Cod,
+    where future emergence is distributed across development periods in
+    proportion to the chain-ladder-implied %-developed pattern, but scaled
+    to each accident period's OWN expected_ultimate_real (the BF or Cape
+    Cod ultimate), not the plain chain-ladder ultimate.
+
+    FIX (was): BF and Cape Cod computed their own real IBNR correctly
+    (BF_IBNR_Real / Cape_Cod_IBNR_Real) but then reinflated and discounted
+    a completely different, plain chain-ladder completed_real triangle --
+    so the "nominal" and "discounted" figures reported had nothing to do
+    with the BF/Cape Cod ultimate. This builds the correct real pattern to
+    feed into reinflate_ibnr_per_ap / build_nominal_triangle_for_discounting.
+
+    Parameters
+    ----------
+    cum_triangle_real : observed real cumulative triangle (working_cum)
+    expected_ultimate_real : list/array, one value per accident period
+        (BF: premium*ELR ; Cape Cod: premium*cape_cod_lr, on real basis)
+    pct_developed : list, one value per development-period column j
+        (i.e. 1/CDF_j)
+    n_periods : n_ap == n_dp (square triangle)
+    """
+    dp_cols = sorted(cum_triangle_real.columns)
+    completed = cum_triangle_real.copy().astype(float)
+
+    for ap in cum_triangle_real.index:
+        last_obs = -1
+        for dp in sorted(cum_triangle_real.columns, reverse=True):
+            if ap + dp < n_periods and pd.notna(cum_triangle_real.loc[ap, dp]):
+                last_obs = dp
+                break
+        if last_obs < 0:
+            continue
+
+        eu = expected_ultimate_real[ap]
+        pct_last_obs = pct_developed[last_obs] if last_obs < len(pct_developed) else 1.0
+        base_val = cum_triangle_real.loc[ap, last_obs]
+
+        for dp in dp_cols:
+            if dp <= last_obs:
+                continue
+            pct_dp = pct_developed[dp] if dp < len(pct_developed) else 1.0
+            if pct_last_obs >= 1.0:
+                completed.loc[ap, dp] = base_val
+            else:
+                share = (pct_dp - pct_last_obs) / (1.0 - pct_last_obs)
+                completed.loc[ap, dp] = base_val + share * (eu - base_val)
+    return completed
+
 def reinflate_ibnr_per_ap(completed_real, cum_triangle_real, n_periods, per_period_rates):
     valuation_idx = n_periods - 1
     last_rate = per_period_rates[-1] if len(per_period_rates) > 0 else 0.0
@@ -190,6 +268,63 @@ def reinflate_ibnr_per_ap(completed_real, cum_triangle_real, n_periods, per_peri
             total += inc_real * forward_inflation(ap + dp)
         nominal_by_ap[ap] = total
     return nominal_by_ap
+
+def build_nominal_triangle_for_discounting(completed_real, cum_triangle_nominal, n_periods, per_period_rates):
+    """
+    Build a proper nominal cumulative triangle cell-by-cell, suitable for
+    discount_completed_triangle.
+
+    FIX (was, in BCL): future cells were set with
+        nominal_map[ap] + working_cum.iloc[ap, n_dp-1]
+    which is NaN for almost every accident period (that column is only
+    observed for the oldest, fully-developed row), and dumped one flat
+    total into every future cell instead of an incremental buildup -- so
+    discount_completed_triangle saw NaN or zero increments for nearly
+    every accident period and barely discounted anything.
+
+    NOW: observed cells are taken directly from cum_triangle_nominal
+    (real data). Future cells are built by taking each REAL incremental
+    amount off completed_real, inflating THAT SPECIFIC increment forward
+    from the valuation date to its own calendar period, and cumulating on
+    top of the last known nominal value.
+    """
+    valuation_idx = n_periods - 1
+    last_rate = per_period_rates[-1] if len(per_period_rates) > 0 else 0.0
+
+    def forward_inflation(t_future):
+        factor = 1.0
+        for k in range(valuation_idx + 1, t_future + 1):
+            ki = k - valuation_idx - 1
+            r = per_period_rates[ki] if ki < len(per_period_rates) else last_rate
+            factor *= (1.0 + r)
+        return factor
+
+    nominal = cum_triangle_nominal.copy().astype(float)
+    dp_cols = sorted(completed_real.columns)
+
+    for ap in completed_real.index:
+        last_obs = -1
+        for dp in sorted(cum_triangle_nominal.columns, reverse=True):
+            if ap + dp < n_periods and pd.notna(cum_triangle_nominal.loc[ap, dp]):
+                last_obs = dp
+                break
+        if last_obs < 0:
+            continue
+
+        running_nominal = float(cum_triangle_nominal.loc[ap, last_obs])
+        for idx_dp, dp in enumerate(dp_cols):
+            if dp <= last_obs:
+                continue
+            cum_curr = completed_real.loc[ap, dp]
+            if pd.isna(cum_curr):
+                continue
+            cum_prev = completed_real.loc[ap, dp_cols[idx_dp - 1]] if idx_dp > 0 else 0.0
+            inc_real = max(float(cum_curr) - float(cum_prev if pd.notna(cum_prev) else 0.0), 0.0)
+            inc_nominal = inc_real * forward_inflation(ap + dp)
+            running_nominal += inc_nominal
+            nominal.loc[ap, dp] = running_nominal
+
+    return nominal
 
 def discount_completed_triangle(completed_triangle, cum_triangle, n_periods, grain, spot_rates=None, flat_rate=None):
     ppy = periods_per_year(grain)
