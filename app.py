@@ -23,14 +23,10 @@ import importlib.util
 import glob
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-# ------------------------------------------------------------
-#  IMPORT DIAGNOSTICS DICTIONARY – captures any import error
-#  so it can be displayed in the Module Status expander
-# ------------------------------------------------------------
+# Dictionary to capture any import error – only shown in the sidebar expander
 _IMPORT_ERRORS = {}
 
 def import_file_glob(relative_pattern):
@@ -51,7 +47,7 @@ def import_file_glob(relative_pattern):
             return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        # Clear any previous error for this pattern on success
+        # Success – remove any previous error for this pattern
         _IMPORT_ERRORS.pop(relative_pattern, None)
         return module
     except Exception as e:
@@ -73,25 +69,35 @@ mack_engine = import_file_glob("LIC_Calculators/RA_Calculators/mack_ra.py")
 bootstrap_engine = import_file_glob("LIC_Calculators/RA_Calculators/bootstrap_ra.py")
 engine_utils = import_file_glob("utils/actuarial_engine_utils.py")
 
-# --- Load Full Valuation engine ---
+# --- Load Full Valuation engine (multiple patterns, clean up errors on success) ---
 full_engine = None
-for pattern in ["Full_Valuation/full_LRC_IFRS17.py", "Full_Valuation/*.py"]:
+for pattern in ["Full_Valuation/full_lrc_ifrs17.py",           # exact lowercase name
+                "Full_Valuation/full_LRC_IFRS17.py",           # original mixed case
+                "Full_Valuation/*.py"]:
     full_engine = import_file_glob(pattern)
     if full_engine is not None:
         break
+
 if full_engine is None:
-    fv_path = os.path.join(BASE_DIR, "Full_Valuation", "full_LRC_IFRS17.py")
+    # Direct import fallback
+    fv_path = os.path.join(BASE_DIR, "Full_Valuation", "full_lrc_ifrs17.py")
     if os.path.exists(fv_path):
         try:
-            spec = importlib.util.spec_from_file_location("full_LRC_IFRS17", fv_path)
+            spec = importlib.util.spec_from_file_location("full_lrc_ifrs17", fv_path)
             if spec:
                 full_engine = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(full_engine)
         except Exception:
             pass
 
+# Once we have the engine, clear all Full_Valuation related import errors
+if full_engine is not None:
+    keys_to_pop = [k for k in _IMPORT_ERRORS if "Full_Valuation" in k]
+    for k in keys_to_pop:
+        _IMPORT_ERRORS.pop(k, None)
+
 # =============================================================================
-#  MODULE STATUS CHECK (now with import error details)
+#  MODULE STATUS CHECK
 # =============================================================================
 module_status = {
     "UPR Engine": upr_engine,
@@ -111,7 +117,6 @@ module_status = {
 
 critical_modules = ["UPR Engine", "OCR Engine", "Engine Utils"]
 missing_critical = [name for name in critical_modules if module_status[name] is None]
-
 if missing_critical:
     st.error("Critical Error: Essential modules could not be loaded.")
     for mod in missing_critical:
@@ -121,9 +126,9 @@ if missing_critical:
 missing_optional = [name for name, mod in module_status.items() 
                     if mod is None and name not in critical_modules]
 
-# ---- Show missing optional modules AND their import errors ----
+# ----- Diagnostic display: ONLY in the sidebar expander, never as a main-page error -----
 if missing_optional or _IMPORT_ERRORS:
-    with st.expander("Module Status", expanded=False):
+    with st.sidebar.expander("Module Status", expanded=False):
         if missing_optional:
             st.warning("Some optional modules could not be loaded:")
             for mod in missing_optional:
@@ -131,7 +136,7 @@ if missing_optional or _IMPORT_ERRORS:
         if _IMPORT_ERRORS:
             st.error("Import errors detected:")
             for pattern, err in _IMPORT_ERRORS.items():
-                with st.expander(f"Error importing: {pattern}"):
+                with st.expander(f"Error: {pattern}"):
                     st.code(err)
 
 # =============================================================================
@@ -290,107 +295,65 @@ st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", i
 
 st.markdown("""
 <style>
-    /* ---- Global box model & typography reset ---- */
     *, *::before, *::after { box-sizing: border-box !important; }
-
     [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
-
     [data-testid="stIconMaterial"], span[class*="material-symbols"], span[class*="material-icons"] {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
     }
-
     .stApp { background-color: #FFFFFF; color: #000000; font-family: 'Calisto MT', 'Georgia', serif; font-size: 11pt; line-height: 1.5; }
-
     h1, h2, h3, h4, h5, h6, p, div, span, label {
         font-family: 'Calisto MT', 'Georgia', serif !important;
         line-height: 1.45;
         overflow-wrap: break-word;
         word-break: break-word;
     }
-
     .hero { background: linear-gradient(135deg, #000000 0%, #1a1a2e 100%); color: #FFFFFF; padding: 2.5rem 2rem; text-align: center; border-bottom: 3px solid #4A90D9; margin-bottom: 2rem; }
     .hero h1 { color: #4A90D9; font-size: 2.5rem; margin: 0 0 0.5rem 0; line-height: 1.2; }
     .hero p { font-size: 1.1rem; max-width: 800px; margin: 0 auto; line-height: 1.5; }
-
     div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
     div[data-testid="column"] { display: flex !important; flex-direction: column !important; }
     div[data-testid="column"] > div[data-testid="stVerticalBlock"] { display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; }
-
     .card {
-        background-color: #F9F9F9;
-        border: 2px solid #4A90D9;
-        border-radius: 10px;
-        padding: 1.25rem 1.25rem;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        margin-bottom: 1rem;
-        text-align: center;
-        min-height: 150px;
-        flex: 1 1 auto;
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        gap: 0.4rem;
-        overflow: hidden;
+        background-color: #F9F9F9; border: 2px solid #4A90D9; border-radius: 10px; padding: 1.25rem 1.25rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 1rem; text-align: center;
+        min-height: 150px; flex: 1 1 auto; width: 100%;
+        display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 0.4rem; overflow: hidden;
     }
     .card h3 { color: #4A90D9; margin: 0; font-size: 1.1rem; line-height: 1.3; width: 100%; }
     .card p { font-size: 0.9rem; color: #555; margin: 0; line-height: 1.4; width: 100%; }
     .status-badge {
-        display: inline-block;
-        margin-top: 0.35rem;
-        padding: 0.15rem 0.7rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: bold;
-        line-height: 1.6;
+        display: inline-block; margin-top: 0.35rem; padding: 0.15rem 0.7rem; border-radius: 999px;
+        font-size: 0.75rem; font-weight: bold; line-height: 1.6;
     }
     .status-badge.available { background-color: #DFF3E3; color: #1E7B34; }
     .status-badge.unavailable { background-color: #F5DADA; color: #A32626; }
-
     .breadcrumb { background-color: #F0F0F0; padding: 0.5rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; border-left: 4px solid #4A90D9; line-height: 1.6; }
     .breadcrumb span { color: #4A90D9; font-weight: bold; }
-
     .stButton > button {
-        background-color: #4A90D9 !important;
-        color: #FFFFFF !important;
-        border: none !important;
-        border-radius: 6px !important;
-        font-weight: bold !important;
-        padding: 0.6rem 1rem !important;
-        width: 100% !important;
-        min-height: 46px;
-        line-height: 1.3 !important;
-        white-space: normal !important;
-        font-family: 'Calisto MT', 'Georgia', serif !important;
+        background-color: #4A90D9 !important; color: #FFFFFF !important; border: none !important; border-radius: 6px !important;
+        font-weight: bold !important; padding: 0.6rem 1rem !important; width: 100% !important; min-height: 46px;
+        line-height: 1.3 !important; white-space: normal !important; font-family: 'Calisto MT', 'Georgia', serif !important;
     }
     .stButton > button:hover { background-color: #357ABD !important; color: #FFFFFF !important; }
     .stButton > button:disabled { background-color: #CCCCCC !important; color: #888888 !important; }
     .stButton { margin-top: auto; }
-
     .section-container { background-color: #F9F9F9; border: 2px solid #4A90D9; border-radius: 10px; padding: 1.5rem; margin-bottom: 1.5rem; }
     .section-container h3 { color: #4A90D9; margin-top: 0; }
     .stFileUploader { border: 2px dashed #4A90D9 !important; border-radius: 10px !important; padding: 1rem !important; }
-
     .report-meta { background-color: #F0F4F8; border: 2px solid #4A90D9; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
     .report-meta td { padding: 4px 8px; line-height: 1.4; }
     .footer { background-color: #000000; color: #FFFFFF; text-align: center; padding: 1.5rem; border-top: 3px solid #4A90D9; margin-top: 3rem; font-size: 0.9rem; line-height: 1.4; }
-
     div[data-testid="stMetric"] { padding: 0.5rem 0.75rem; }
     div[data-testid="stMetricLabel"] { white-space: normal !important; line-height: 1.3 !important; }
     div[data-testid="stMetricValue"] { line-height: 1.3 !important; overflow-wrap: break-word; font-size: 1.6rem !important; }
     div[data-testid="stMetricDelta"] { line-height: 1.3 !important; }
-
     .stSelectbox label, .stMultiSelect label, .stTextInput label,
     .stNumberInput label, .stDateInput label, .stRadio label,
     .stCheckbox label, .stFileUploader label {
-        line-height: 1.4 !important;
-        overflow-wrap: break-word;
-        margin-bottom: 0.25rem !important;
+        line-height: 1.4 !important; overflow-wrap: break-word; margin-bottom: 0.25rem !important;
     }
     div[data-baseweb="select"] { line-height: 1.4 !important; }
     div[data-baseweb="select"] > div { min-height: 42px; }
-
     div[data-testid="stDataFrame"] * { line-height: 1.4 !important; }
 </style>
 """, unsafe_allow_html=True)
