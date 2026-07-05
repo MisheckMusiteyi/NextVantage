@@ -474,38 +474,63 @@ def render_upr_calculator():
             df_processed = df_processed.dropna(subset=['Start_Date', 'End_Date'])
             df_processed = df_processed[df_processed['End_Date'] > df_processed['Start_Date']]
             for c in selected_value_cols: df_processed[c] = pd.to_numeric(df_processed[c], errors='coerce').fillna(0)
+
+            # Duration calculations
             df_processed["Duration_Days"] = (df_processed["End_Date"] - df_processed["Start_Date"]).dt.days + 1
             df_processed = df_processed[df_processed["Duration_Days"] > 0]
             if df_processed.empty: st.error("No valid policies after data validation."); return
             st.success(f"{len(df_processed):,} valid policies loaded")
+
             if st.button("Calculate UPR", key="upr_calc", use_container_width=True):
                 with st.spinner("Calculating UPR..."):
-                    df_processed['Remaining_Days'] = (df_processed["End_Date"] - valuation_date_ts).dt.days + 1
-                    df_processed['Remaining_Days'] = np.clip(df_processed['Remaining_Days'], 0, df_processed['Duration_Days'])
-                    if method == "365th": df_processed['Unearned_Portion'] = df_processed['Remaining_Days'] / df_processed['Duration_Days']
+                    # Explicit condition: fully earned / fully unearned
+                    df_processed['Unearned_Portion'] = 0.0
+                    mask_fully_unearned = valuation_date_ts <= df_processed['Start_Date']
+                    mask_fully_earned   = valuation_date_ts >= df_processed['End_Date']
+                    mask_partial        = ~(mask_fully_unearned | mask_fully_earned)
+
+                    df_processed.loc[mask_fully_unearned, 'Unearned_Portion'] = 1.0
+                    df_processed.loc[mask_fully_earned,   'Unearned_Portion'] = 0.0
+
+                    if method == "365th":
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            (df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1
+                        ) / df_processed.loc[mask_partial, "Duration_Days"]
                     elif method == "24th":
                         interval = 365.25 / 24
-                        df_processed['Unearned_Portion'] = (df_processed['Remaining_Days'] / interval) / (df_processed['Duration_Days'] / interval)
-                    else:
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
+                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
+                    else:  # 8th
                         interval = 365.25 / 8
-                        df_processed['Unearned_Portion'] = (df_processed['Remaining_Days'] / interval) / (df_processed['Duration_Days'] / interval)
-                    for c in selected_value_cols: df_processed[f"{c}_UPR"] = df_processed['Unearned_Portion'] * df_processed[c]
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
+                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
+
+                    for c in selected_value_cols:
+                        df_processed[f"{c}_UPR"] = df_processed['Unearned_Portion'] * df_processed[c]
+
                     upr_columns = [f"{c}_UPR" for c in selected_value_cols]
+                    # Aggregated result
                     result = df_processed.groupby(grouping_cols)[upr_columns].sum().reset_index()
                     result.columns = grouping_cols + selected_value_cols
 
                     per_policy_df = None
                     if include_per_policy:
                         per_policy_df = df_processed[[start_date_col, end_date_col] + grouping_cols +
-                                                      ['Duration_Days', 'Remaining_Days']].copy()
-                        per_policy_df['Earned_Duration'] = per_policy_df['Duration_Days'] - per_policy_df['Remaining_Days']
+                                                      ['Duration_Days']].copy()
+                        per_policy_df['Unearned_Duration'] = (
+                            df_processed['Unearned_Portion'] * df_processed['Duration_Days']
+                        ).round(0).astype(int)
+                        per_policy_df['Earned_Duration'] = (
+                            per_policy_df['Duration_Days'] - per_policy_df['Unearned_Duration']
+                        )
                         for c in selected_value_cols:
                             per_policy_df[f"{c}_UPR"] = df_processed[f"{c}_UPR"]
                         per_policy_df = per_policy_df.rename(columns={
                             start_date_col: 'Start_Date',
                             end_date_col: 'End_Date',
-                            'Duration_Days': 'Policy_Duration',
-                            'Remaining_Days': 'Unearned_Duration'
+                            'Duration_Days': 'Policy_Duration'
                         })
 
                 st.markdown("### UPR Results")
@@ -525,7 +550,6 @@ def render_upr_calculator():
                 st.download_button("Download UPR Results", data=output, file_name=f"{sc}_{so}_UPR_{method}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="upr_dl")
         except Exception as e: st.error(f"Error: {e}")
     back_button('lrc', ['Home', 'LRC Calculators'])
-
 
 # ---------- Loss Component (unchanged) ----------
 def render_loss_component():
