@@ -142,6 +142,87 @@ def map_columns(df, required_fields, prefix):
     return mapping
 
 # =============================================================================
+#  CACHED / MEMORY-OPTIMIZED FILE LOADING
+#  Streamlit reruns the whole script on every widget interaction. Without
+#  caching, a large upload gets re-read from disk and re-parsed on every
+#  single click (checkbox, selectbox, etc.), which is the single biggest
+#  drag on responsiveness for big files. @st.cache_data keys on the file's
+#  content, so the parse only happens once per distinct upload.
+# =============================================================================
+
+def _optimize_dtypes(df, category_threshold=0.5, category_max_unique=10000):
+    """Downcast numeric columns and convert low-cardinality text columns to
+    'category'. Cuts memory 30-50% on typical claims/premium files and
+    speeds up downstream groupby/merge/filter operations."""
+    for col in df.columns:
+        dtype = df[col].dtype
+        if pd.api.types.is_float_dtype(dtype):
+            df[col] = pd.to_numeric(df[col], downcast='float')
+        elif pd.api.types.is_integer_dtype(dtype):
+            df[col] = pd.to_numeric(df[col], downcast='integer')
+        elif dtype == object:
+            n_total = len(df[col])
+            if n_total > 0:
+                n_unique = df[col].nunique(dropna=True)
+                if (n_unique / n_total) < category_threshold and n_unique < category_max_unique:
+                    df[col] = df[col].astype('category')
+    return df
+
+@st.cache_data(show_spinner=False)
+def read_uploaded_file(uploaded_file, optimize=True):
+    """Cached read of a CSV/Excel upload: strips column names, drops
+    'Unnamed:' columns, and (optionally) optimizes dtypes. Re-running the
+    app (e.g. toggling a checkbox) reuses this result instead of
+    re-parsing the file from scratch."""
+    name = uploaded_file.name
+    df = pd.read_csv(uploaded_file) if name.endswith('.csv') else pd.read_excel(uploaded_file)
+    unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
+    if unnamed:
+        df = df.drop(columns=unnamed)
+    df.columns = df.columns.astype(str).str.strip()
+    if optimize:
+        df = _optimize_dtypes(df)
+    return df
+
+@st.cache_data(show_spinner=False)
+def read_uploaded_triangle(uploaded_file):
+    """Cached read of a cumulative-triangle upload (first column = AY
+    labels, index_col=0)."""
+    name = uploaded_file.name
+    df = pd.read_csv(uploaded_file, index_col=0) if name.endswith('.csv') else pd.read_excel(uploaded_file, index_col=0)
+    return df.apply(pd.to_numeric, errors='coerce')
+
+def build_download_payload(sheets: dict, row_threshold: int = 100_000):
+    """Build a downloadable payload for one or more named DataFrames.
+
+    For small results this writes a single .xlsx via openpyxl (unchanged
+    behavior/format). Once the combined row count crosses row_threshold,
+    openpyxl becomes noticeably slow and memory-hungry, so instead this
+    zips one CSV per sheet -- much faster to build and download for large
+    detail exports, at the cost of losing the multi-tab Excel format only
+    when the data is big enough that it wouldn't open comfortably in
+    Excel anyway.
+
+    Returns (bytes_io, file_extension, mime_type).
+    """
+    total_rows = sum(len(df) for df in sheets.values())
+    if total_rows <= row_threshold:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            for sheet_name, df in sheets.items():
+                df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        output.seek(0)
+        return output, "xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    else:
+        import zipfile
+        output = BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as zf:
+            for sheet_name, df in sheets.items():
+                zf.writestr(f"{sheet_name}.csv", df.to_csv(index=False))
+        output.seek(0)
+        return output, "zip", "application/zip"
+
+# =============================================================================
 #  INFLATION & DISCOUNTING UI HELPERS
 # =============================================================================
 
@@ -152,7 +233,7 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
     per_period_rates = None
     if inf_file:
         try:
-            inf_df = pd.read_csv(inf_file) if inf_file.name.endswith('.csv') else pd.read_excel(inf_file)
+            inf_df = read_uploaded_file(inf_file)
             inf_df.columns = inf_df.columns.astype(str).str.strip()
             c1, c2 = st.columns(2)
             with c1: p_col = st.selectbox("Period Column", inf_df.columns, key=f"inf_p_{page_key}")
@@ -184,7 +265,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
         yc_file = st.file_uploader("Upload Yield Curve (CSV/Excel: Duration_Years, Spot_Rate %)", type=["csv","xlsx","xls"], key=f"yc_{page_key}")
         if yc_file:
             try:
-                yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
+                yc_df = read_uploaded_file(yc_file)
                 yc_df.columns = yc_df.columns.astype(str).str.strip()
                 c1, c2 = st.columns(2)
                 with c1: m_col = st.selectbox("Duration Column", yc_df.columns, key=f"yc_m_{page_key}")
@@ -513,7 +594,7 @@ def render_upr_calculator():
         try:
             original_filename = uploaded_file.name
             base_filename = re.sub(r'\.[^.]*$', '', original_filename)
-            df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            df = read_uploaded_file(uploaded_file)
             unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
             if unnamed: df = df.drop(columns=unnamed)
             df.columns = df.columns.astype(str).str.strip()
@@ -576,7 +657,7 @@ def render_loss_component():
     uploaded_file = st.file_uploader("Upload Data File (CSV or Excel)", type=["csv", "xlsx", "xls"], key="lc_f")
     if uploaded_file is not None:
         try:
-            df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            df = read_uploaded_file(uploaded_file)
             df.columns = df.columns.astype(str).str.strip()
             st.dataframe(df.head(5), use_container_width=True)
             st.markdown("### Column Mapping")
@@ -634,7 +715,7 @@ def render_ocr_calculator():
     if uploaded_file is not None:
         try:
             original_filename = uploaded_file.name; base_filename = re.sub(r'\.[^.]*$', '', original_filename)
-            df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+            df = read_uploaded_file(uploaded_file)
             unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
             if unnamed: df = df.drop(columns=unnamed)
             df.columns = df.columns.astype(str).str.strip()
@@ -677,7 +758,7 @@ def render_percentage_calculator():
         st.info("Upload a file with Date, Line of Business, and Amount columns.")
         back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
-        df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df = read_uploaded_file(uploaded)
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
@@ -727,7 +808,7 @@ def render_bcl_calculator():
     uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="bcl_f")
     if uploaded is None: st.info("Upload claims data file."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
-        df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df = read_uploaded_file(uploaded)
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
@@ -804,12 +885,9 @@ def render_bcl_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary['IBNR'].sum() if 'IBNR' in summary.columns else 0
             st.metric("Total BCL IBNR", f"{total_ibnr:,.2f}")
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w:
-                summary.to_excel(w, index=False, sheet_name='BCL_Summary')
-                final_df.to_excel(w, index=False, sheet_name='BCL_Detail')
-            output.seek(0); sc = sanitize_filename(client_name)
-            st.download_button("Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="bcl_dl")
+            output, ext, mime = build_download_payload({'BCL_Summary': summary, 'BCL_Detail': final_df})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.{ext}", mime=mime, key="bcl_dl")
     except Exception as e: st.error(f"Error: {e}")
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
@@ -825,9 +903,9 @@ def render_capecod_calculator():
     prem_file = st.file_uploader("Premiums Data (LOB, Premium Amount)", type=["csv", "xlsx", "xls"], key="cc_pf")
     if claims_file is None or prem_file is None: st.info("Upload both claims and premiums files."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
-        df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
+        df = read_uploaded_file(claims_file)
         df.columns = df.columns.astype(str).str.strip()
-        prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+        prem_df = read_uploaded_file(prem_file)
         prem_df.columns = prem_df.columns.astype(str).str.strip()
         st.dataframe(df.head(3), use_container_width=True); st.dataframe(prem_df.head(3), use_container_width=True)
         cols = df.columns.tolist()
@@ -891,8 +969,14 @@ def render_capecod_calculator():
                     prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
                     prem_sub[prem_amt_col] = pd.to_numeric(prem_sub[prem_amt_col], errors='coerce').fillna(0)
                     prems = []
+                    # Vectorized substring match instead of .apply(axis=1) per year --
+                    # same "does this row's LOB text contain the year" logic, but done
+                    # as a single pandas string op instead of scanning row-by-row in
+                    # Python once per year in the valuation window.
+                    prem_lob_str = prem_sub[prem_lob_col].astype(str)
                     for yr in range(from_dt.year, from_dt.year + n_periods):
-                        yr_prem = prem_sub[prem_sub.apply(lambda r: str(yr) in str(r[prem_lob_col]) if pd.notna(r[prem_lob_col]) else False, axis=1)][prem_amt_col].sum()
+                        mask = prem_lob_str.str.contains(str(yr), na=False, regex=False)
+                        yr_prem = prem_sub.loc[mask, prem_amt_col].sum()
                         prems.append(yr_prem)
                     if sum(prems) == 0: prems = [1.0] * n_periods
                     for ac in amount_cols:
@@ -922,12 +1006,9 @@ def render_capecod_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w:
-                summary.to_excel(w, index=False, sheet_name='CapeCod_Summary')
-                final_df.to_excel(w, index=False, sheet_name='CapeCod_Detail')
-            output.seek(0); sc = sanitize_filename(client_name)
-            st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="cc_dl")
+            output, ext, mime = build_download_payload({'CapeCod_Summary': summary, 'CapeCod_Detail': final_df})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
     except Exception as e: st.error(f"Error: {e}")
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
@@ -943,7 +1024,7 @@ def render_bf_calculator():
     prem_file = st.file_uploader("Premiums Data (LOB, Premium Amount) - Optional", type=["csv", "xlsx", "xls"], key="bf_pf")
     if claims_file is None: st.info("Upload claims data file."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
-        df = pd.read_csv(claims_file) if claims_file.name.endswith('.csv') else pd.read_excel(claims_file)
+        df = read_uploaded_file(claims_file)
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
@@ -962,7 +1043,7 @@ def render_bf_calculator():
         lobs = sorted(df[lob_col].dropna().unique())
         prem_df = None; prem_lob_col = None; prem_amt_col = None
         if prem_file is not None:
-            prem_df = pd.read_csv(prem_file) if prem_file.name.endswith('.csv') else pd.read_excel(prem_file)
+            prem_df = read_uploaded_file(prem_file)
             prem_df.columns = prem_df.columns.astype(str).str.strip()
             st.dataframe(prem_df.head(3), use_container_width=True)
             p_cols = prem_df.columns.tolist()
@@ -1051,12 +1132,9 @@ def render_bf_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w:
-                summary.to_excel(w, index=False, sheet_name='BF_Summary')
-                final_df.to_excel(w, index=False, sheet_name='BF_Detail')
-            output.seek(0); sc = sanitize_filename(client_name)
-            st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="bf_dl")
+            output, ext, mime = build_download_payload({'BF_Summary': summary, 'BF_Detail': final_df})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.{ext}", mime=mime, key="bf_dl")
     except Exception as e: st.error(f"Error: {e}")
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
@@ -1071,7 +1149,7 @@ def render_ulae_calculator():
     uploaded = st.file_uploader("Upload Reserves File (LOB, OCR, IBNR)", type=["csv", "xlsx", "xls"], key="ulae_f")
     if uploaded is None: st.info("Upload file with LOB, OCR, and IBNR columns."); back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
     try:
-        df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+        df = read_uploaded_file(uploaded)
         df.columns = df.columns.astype(str).str.strip()
         st.dataframe(df.head(5), use_container_width=True)
         cols = df.columns.tolist()
@@ -1108,9 +1186,9 @@ def render_npr_calculator():
     lic_file = st.file_uploader("Upload Ceded LIC File", type=["csv", "xlsx", "xls"], key="npr_lf")
     if ri_file is None or lic_file is None: st.info("Upload both Reinsurer and Ceded LIC files."); back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
     try:
-        ri_df = pd.read_csv(ri_file) if ri_file.name.endswith('.csv') else pd.read_excel(ri_file)
+        ri_df = read_uploaded_file(ri_file)
         ri_df.columns = ri_df.columns.astype(str).str.strip()
-        lic_df = pd.read_csv(lic_file) if lic_file.name.endswith('.csv') else pd.read_excel(lic_file)
+        lic_df = read_uploaded_file(lic_file)
         lic_df.columns = lic_df.columns.astype(str).str.strip()
         c1, c2 = st.columns(2)
         with c1: st.caption("Reinsurer Data"); st.dataframe(ri_df.head(3), use_container_width=True)
@@ -1130,14 +1208,18 @@ def render_npr_calculator():
             lic_df[ibnr_col] = pd.to_numeric(lic_df[ibnr_col], errors='coerce').fillna(0)
             lic_df[ocr_col] = pd.to_numeric(lic_df[ocr_col], errors='coerce').fillna(0)
             lic_df['Total_LIC'] = lic_df[ibnr_col] + lic_df[ocr_col]
-            rows = []
-            for _, ri in ri_df.iterrows():
-                for _, lic in lic_df.iterrows():
-                    npr = ri[pd_col] * ri[share_col] * lic['Total_LIC']
-                    rows.append({'Reinsurer': ri[name_col], 'Portfolio': lic[port_col], 'PD': ri[pd_col], 'Share': ri[share_col], 'Total_LIC': lic['Total_LIC'], 'NPR': npr})
-            res = pd.DataFrame(rows)
-            by_port = res.groupby('Portfolio')['NPR'].sum().reset_index()
-            by_ri = res.groupby('Reinsurer')['NPR'].sum().reset_index()
+            # Vectorized cross join (every reinsurer x every portfolio) instead of a
+            # nested Python iterrows() loop -- same result, but O(n*m) work happens
+            # in pandas/NumPy rather than row-by-row Python, which matters a lot
+            # once either file has more than a few hundred rows.
+            ri_small = ri_df[[name_col, pd_col, share_col]].rename(
+                columns={name_col: 'Reinsurer', pd_col: 'PD', share_col: 'Share'})
+            lic_small = lic_df[[port_col, 'Total_LIC']].rename(columns={port_col: 'Portfolio'})
+            res = ri_small.merge(lic_small, how='cross')
+            res['NPR'] = res['PD'] * res['Share'] * res['Total_LIC']
+            res = res[['Reinsurer', 'Portfolio', 'PD', 'Share', 'Total_LIC', 'NPR']]
+            by_port = res.groupby('Portfolio', observed=True)['NPR'].sum().reset_index()
+            by_ri = res.groupby('Reinsurer', observed=True)['NPR'].sum().reset_index()
             st.markdown("### NPR Results")
             c1, c2 = st.columns(2)
             with c1:
@@ -1147,13 +1229,9 @@ def render_npr_calculator():
                 disp2 = by_ri.copy(); disp2['NPR'] = disp2['NPR'].apply(lambda x: f"{x:,.2f}")
                 st.dataframe(disp2, use_container_width=True, hide_index=True)
             st.metric("Total NPR", f"{res['NPR'].sum():,.2f}")
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w:
-                by_port.to_excel(w, index=False, sheet_name='NPR_by_Portfolio')
-                by_ri.to_excel(w, index=False, sheet_name='NPR_by_Reinsurer')
-                res.to_excel(w, index=False, sheet_name='NPR_Detail')
-            output.seek(0); sc = sanitize_filename(client_name)
-            st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="npr_dl")
+            output, ext, mime = build_download_payload({'NPR_by_Portfolio': by_port, 'NPR_by_Reinsurer': by_ri, 'NPR_Detail': res})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR.{ext}", mime=mime, key="npr_dl")
     except Exception as e: st.error(f"Error: {e}")
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
@@ -1250,8 +1328,7 @@ def render_mack_calculator():
         st.caption("First column = AY labels, remaining = cumulative claims.")
         if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
         try:
-            raw = pd.read_csv(uploaded, index_col=0) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded, index_col=0)
-            raw = raw.apply(pd.to_numeric, errors='coerce')
+            raw = read_uploaded_triangle(uploaded)
             st.dataframe(raw, use_container_width=True)
             grain = "Y"; ppy = 1
             st.markdown("### Adjustments")
@@ -1273,7 +1350,7 @@ def render_mack_calculator():
         uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="mck_f_cl")
         if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
         try:
-            df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+            df = read_uploaded_file(uploaded)
             df.columns = df.columns.astype(str).str.strip()
             st.dataframe(df.head(5), use_container_width=True)
             cols = df.columns.tolist()
@@ -1432,8 +1509,7 @@ def render_bootstrap_calculator():
         st.caption("First column = AY labels, remaining = cumulative claims.")
         if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
         try:
-            raw = pd.read_csv(uploaded, index_col=0) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded, index_col=0)
-            raw = raw.apply(pd.to_numeric, errors='coerce')
+            raw = read_uploaded_triangle(uploaded)
             st.dataframe(raw, use_container_width=True)
             grain = "Y"; ppy = 1
             st.markdown("### Adjustments")
@@ -1455,7 +1531,7 @@ def render_bootstrap_calculator():
         uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="bts_f_cl")
         if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
         try:
-            df = pd.read_csv(uploaded) if uploaded.name.endswith('.csv') else pd.read_excel(uploaded)
+            df = read_uploaded_file(uploaded)
             df.columns = df.columns.astype(str).str.strip()
             st.dataframe(df.head(5), use_container_width=True)
             cols = df.columns.tolist()
@@ -1556,7 +1632,7 @@ def render_full_valuation():
         yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx"], key="fv_yc_disc")
         if yc_file is not None:
             try:
-                yc_df = pd.read_csv(yc_file) if yc_file.name.endswith('.csv') else pd.read_excel(yc_file)
+                yc_df = read_uploaded_file(yc_file)
                 yc_df.columns = yc_df.columns.astype(str).str.strip()
                 st.markdown("**Yield Curve Column Mapping:**")
                 yc_map = map_columns(yc_df, ['Duration_Years', 'Spot_Rate'], 'fv_yc')
@@ -1575,7 +1651,7 @@ def render_full_valuation():
     
     if lc_data_file is not None:
         try:
-            lc_raw = pd.read_csv(lc_data_file) if lc_data_file.name.endswith('.csv') else pd.read_excel(lc_data_file)
+            lc_raw = read_uploaded_file(lc_data_file)
             lc_raw.columns = lc_raw.columns.astype(str).str.strip()
             st.dataframe(lc_raw.head(3), use_container_width=True)
             
@@ -1624,11 +1700,11 @@ def render_full_valuation():
     required = [opening_file, cashflows_file, policy_file, lc_data_file]
     if all(f is not None for f in required):
         try:
-            opening_df = pd.read_csv(opening_file) if opening_file.name.endswith('.csv') else pd.read_excel(opening_file)
+            opening_df = read_uploaded_file(opening_file)
             opening_df.columns = opening_df.columns.astype(str).str.strip()
-            cashflows_df = pd.read_csv(cashflows_file) if cashflows_file.name.endswith('.csv') else pd.read_excel(cashflows_file)
+            cashflows_df = read_uploaded_file(cashflows_file)
             cashflows_df.columns = cashflows_df.columns.astype(str).str.strip()
-            policy_df = pd.read_csv(policy_file) if policy_file.name.endswith('.csv') else pd.read_excel(policy_file)
+            policy_df = read_uploaded_file(policy_file)
             policy_df.columns = policy_df.columns.astype(str).str.strip()
             
             st.markdown("### Column Mapping")
@@ -1652,7 +1728,7 @@ def render_full_valuation():
             if efp_file is None:
                 st.info("Upload the Expected Future Premiums file to proceed.")
                 return
-            efp_df = pd.read_csv(efp_file) if efp_file.name.endswith('.csv') else pd.read_excel(efp_file)
+            efp_df = read_uploaded_file(efp_file)
             efp_df.columns = efp_df.columns.astype(str).str.strip()
             efp_map = map_columns(efp_df, ['Group','Expected_Future_Premiums'], 'fv_efp')
             efp_df = efp_df.rename(columns={v:k for k,v in efp_map.items()})
@@ -1666,7 +1742,7 @@ def render_full_valuation():
             # Claims curve (optional)
             claims_curve_df = None
             if claims_curve_file is not None:
-                cc_df = pd.read_csv(claims_curve_file) if claims_curve_file.name.endswith('.csv') else pd.read_excel(claims_curve_file)
+                cc_df = read_uploaded_file(claims_curve_file)
                 cc_df.columns = cc_df.columns.astype(str).str.strip()
                 cc_map = map_columns(cc_df, ['Period','Percentage'], 'fv_cc')
                 claims_curve_df = cc_df.rename(columns={v:k for k,v in cc_map.items()})
