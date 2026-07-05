@@ -134,6 +134,40 @@ def periods_per_year(grain):
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', '', name).strip() or "Client"
 
+def show_error(e):
+    """Display a clear, human-readable error. Detects the common pandas
+    failure that occurs when a column expected to hold numbers actually
+    contains text (e.g. malformed numbers, currency symbols, stray words),
+    and rewrites it in plain language. Falls back to the raw message
+    for anything else."""
+    msg = str(e)
+
+    # Pattern raised by pandas/pyarrow when a numeric conversion hits a
+    # non-numeric string, e.g.:
+    # "Could not convert '14,000,00.00' with type str: tried to convert to double"
+    # optionally followed by "... Conversion failed for column Sum Insured with type category"
+    bad_value_match = re.search(r"[Cc]ould not convert '([^']+)' with type str", msg)
+    col_match = re.search(r"column ([^\s]+) with type", msg)
+    also_generic_float_match = re.search(r"could not convert string to float: '([^']+)'", msg)
+
+    if bad_value_match or also_generic_float_match:
+        bad_value = bad_value_match.group(1) if bad_value_match else also_generic_float_match.group(1)
+        col_name = col_match.group(1) if col_match else None
+        col_text = f" in the **'{col_name}'** column" if col_name else ""
+        st.error(
+            f"**Non-numeric value found{col_text}: '{bad_value}'**\n\n"
+            f"A column expected to contain only numbers (e.g. an amount, premium, "
+            f"or sum insured) has at least one value that isn't a valid number. "
+            f"This commonly happens because of a stray text entry, a formatting "
+            f"issue such as extra/misplaced commas, a currency symbol, or a "
+            f"leading/trailing space.\n\n"
+            f"Please open your source file, fix or remove the offending value(s) "
+            f"in that column, and re-upload."
+        )
+        return
+
+    st.error(f"Error: {msg}")
+
 def _check_duplicate_columns(df, filename=None):
     """Raise a clear, actionable error if the uploaded file has duplicate column headers."""
     cols = pd.Series(df.columns.astype(str))
@@ -229,7 +263,7 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
             per_period_rates = (1 + annual_rates_tgt) ** (1 / ppy) - 1
             cum_inflation = np.cumprod(1 + per_period_rates)
             st.success("Inflation curve loaded and interpolated.")
-        except Exception as e: st.error(f"Inflation data error: {e}")
+        except Exception as e: show_error(e)
     return cum_inflation, per_period_rates
 
 def _apply_flexible_date_filter(df, date_col, filter_type, date1=None, date2=None):
@@ -297,7 +331,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
                 period_maturities = np.arange(1, 61) / ppy
                 spot_rates = np.clip(f_interp(period_maturities), 0, 1.0)
                 st.success("Yield curve loaded and interpolated.")
-            except Exception as e: st.error(f"Yield curve error: {e}")
+            except Exception as e: show_error(e)
     elif disc_method == "Single Flat Rate":
         flat_rate = st.number_input("Annual Discount Rate (%)", 0.0, 50.0, 5.0, 0.5, key=f"flat_{page_key}") / 100.0
     return spot_rates, flat_rate
@@ -607,7 +641,7 @@ def render_upr_calculator():
                 output.seek(0)
                 sc = sanitize_filename(client_name); so = sanitize_filename(base_filename)
                 st.download_button("Download UPR Results", data=output, file_name=f"{sc}_{so}_UPR_{method}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="upr_dl")
-        except Exception as e: st.error(f"Error: {e}")
+        except Exception as e: show_error(e)
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
@@ -665,7 +699,7 @@ def render_loss_component():
                 output.seek(0)
                 sc = sanitize_filename(client_name)
                 st.download_button("Download Results", data=output, file_name=f"{sc}_Loss_Component.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="lc_dl")
-        except Exception as e: st.error(f"Error: {e}")
+        except Exception as e: show_error(e)
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
@@ -733,7 +767,7 @@ def render_ocr_calculator():
             output.seek(0)
             sc = sanitize_filename(client_name); so = sanitize_filename(base_filename)
             st.download_button("Download OCR Results", data=output, file_name=f"{sc}_{so}_OCR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ocr_dl")
-        except Exception as e: st.error(f"Error: {e}")
+        except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
@@ -786,7 +820,7 @@ def render_percentage_calculator():
             output.seek(0)
             sc = sanitize_filename(client_name)
             st.download_button("Download Results", data=output, file_name=f"{sc}_Percentage_IBNR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="pct_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
@@ -907,7 +941,7 @@ def render_bcl_calculator():
             output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.{ext}", mime=mime, key="bcl_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
@@ -1063,7 +1097,7 @@ def render_capecod_calculator():
             output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
@@ -1227,7 +1261,7 @@ def render_bf_calculator():
             output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.{ext}", mime=mime, key="bf_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
@@ -1265,7 +1299,7 @@ def render_ulae_calculator():
             with pd.ExcelWriter(output, engine='openpyxl') as w: res.to_excel(w, index=False, sheet_name='ULAE_Results')
             output.seek(0); sc = sanitize_filename(client_name)
             st.download_button("Download ULAE Results", data=output, file_name=f"{sc}_ULAE.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ulae_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
@@ -1319,7 +1353,7 @@ def render_npr_calculator():
             output, ext, mime = build_download_payload({'NPR_by_Portfolio': by_port, 'NPR_by_Reinsurer': by_ri, 'NPR_Detail': res})
             sc = sanitize_filename(client_name)
             st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR.{ext}", mime=mime, key="npr_dl")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
@@ -1401,7 +1435,7 @@ def render_mack_calculator():
             if st.button("Calculate Mack RA", key="mck_run_cl", use_container_width=True):
                 run_mack_calculation(cum_triangle, confidence, z_score, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
         else: st.error("Engine utils not available.")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
@@ -1497,7 +1531,7 @@ def render_bootstrap_calculator():
             if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_cl", use_container_width=True):
                 run_bootstrap_calculation(cum_triangle, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
         else: st.error("Engine utils not available.")
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: show_error(e)
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
@@ -1576,7 +1610,7 @@ def render_full_valuation():
                 yc_map = map_columns(yc_df, ['Duration_Years', 'Spot_Rate'], 'fv_yc')
                 yield_curve_df = yc_df.rename(columns={v: k for k, v in yc_map.items()})
             except Exception as e:
-                st.error(f"Yield curve error: {e}")
+                show_error(e)
     
     # Loss Component – always via engine
     st.markdown("#### Loss Component (computed via engine)")
@@ -1633,7 +1667,7 @@ def render_full_valuation():
                     st.success("Loss Component computed. Ready for valuation.")
                     st.dataframe(lc_result)
         except Exception as e:
-            st.error(f"Loss Component error: {e}")
+            show_error(e)
     
     required = [opening_file, cashflows_file, policy_file, lc_data_file]
     if all(f is not None for f in required):
@@ -1717,7 +1751,7 @@ def render_full_valuation():
                             st.metric("Total Closing LRC", f"{data['Total_Closing_LRC']:,.2f}")
                         st.markdown(f"**Combined Ratio:** {data.get('Combined_Ratio',0):.2%} | **UPR Snapshot:** {data.get('UPR_Snapshot',0):,.2f}")
         except Exception as e:
-            st.error(f"Error: {e}")
+            show_error(e)
             with st.expander("Details"): import traceback; st.code(traceback.format_exc())
     else:
         st.info("Please upload all required files (Opening Balances, Cashflows, Policy, Loss Component Input).")
