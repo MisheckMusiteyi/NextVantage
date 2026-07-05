@@ -384,7 +384,7 @@ def back_button(target_page, target_breadcrumb):
 
 
 # =============================================================================
-#  NAVIGATION PAGES
+#  NAVIGATION PAGES (unchanged)
 # =============================================================================
 
 def render_home():
@@ -817,6 +817,10 @@ def render_bcl_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
+# =============================================================================
+#  CAPE COD — updated with wide‑format premiums & period validation, LOB filtering
+# =============================================================================
+
 def render_capecod_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Cape Cod - IBNR</h1><p>Uses premiums to derive expected loss ratio</p></div>', unsafe_allow_html=True)
@@ -825,7 +829,7 @@ def render_capecod_calculator():
     with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="cc_fd")
     with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="cc_td")
     claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="cc_cf")
-    prem_file = st.file_uploader("Premiums Data (LOB, Premium Amount)", type=["csv", "xlsx", "xls"], key="cc_pf")
+    prem_file = st.file_uploader("Premiums Data (Dev_Period + LOB columns)", type=["csv", "xlsx", "xls"], key="cc_pf")
     if claims_file is None or prem_file is None: st.info("Upload both claims and premiums files."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
         df = read_uploaded_file(claims_file)
@@ -841,15 +845,28 @@ def render_capecod_calculator():
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="cc_amt")
         if not amount_cols: st.warning("Please select at least one Amount column."); return
-        p_cols = prem_df.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1: prem_lob_col = st.selectbox("LOB Column (Premiums)", p_cols, key="cc_prem_lob")
-        with c2: prem_amt_col = st.selectbox("Premium Amount Column", p_cols, key="cc_prem_amt")
+
+        # Extract unique LOBs from claims data BEFORE showing premium mapping
         df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
         for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
+        lobs = sorted(df[lob_col].dropna().unique())   # <-- unique LOB list
+
+        # ---- Wide premiums mapping ----
+        p_cols = prem_df.columns.tolist()
+        c1, c2 = st.columns(2)
+        with c1:
+            prem_period_col = st.selectbox("Development Period Column", p_cols, key="cc_prem_period")
+        with c2:
+            # Only show columns that match (case-insensitively) the claims LOBs
+            lob_candidates = [c for c in p_cols if c != prem_period_col
+                              and any(c.strip().lower() == lob.strip().lower() for lob in lobs)]
+            if not lob_candidates:
+                st.warning("No premium columns matched the LOBs found in claims data.")
+            selected_lob_cols = st.multiselect("LOB Premium Columns (one per LOB)", lob_candidates, key="cc_prem_lobs")
+
         grain = "Y"; ppy = 1; n_periods = to_dt.year - from_dt.year + 1
         st.markdown("### LDF Method Selection")
         selected_method = "volume_weighted"
@@ -887,19 +904,34 @@ def render_capecod_calculator():
         if st.button("Calculate Cape Cod IBNR", key="cc_run", use_container_width=True):
             if ibnr_cc is None or engine_utils is None: st.error("Required engines not available."); return
             with st.spinner("Calculating Cape Cod IBNR..."):
-                lobs = sorted(df[lob_col].dropna().unique())
                 all_results = []
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
-                    prem_sub[prem_amt_col] = pd.to_numeric(prem_sub[prem_amt_col], errors='coerce').fillna(0)
-                    prems = []
-                    prem_lob_str = prem_sub[prem_lob_col].astype(str)
-                    for yr in range(from_dt.year, from_dt.year + n_periods):
-                        mask = prem_lob_str.str.contains(str(yr), na=False, regex=False)
-                        yr_prem = prem_sub.loc[mask, prem_amt_col].sum()
-                        prems.append(yr_prem)
-                    if sum(prems) == 0: prems = [1.0] * n_periods
+                    # Extract premiums for this LOB from wide file
+                    prems = [1.0] * n_periods
+                    if prem_period_col and selected_lob_cols:
+                        lob_col_name = None
+                        for col in selected_lob_cols:
+                            if col.strip().lower() == lob.strip().lower():
+                                lob_col_name = col
+                                break
+                        if lob_col_name is not None:
+                            lob_prem = prem_df[[prem_period_col, lob_col_name]].copy()
+                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                            lob_prem[lob_col_name] = pd.to_numeric(lob_prem[lob_col_name], errors='coerce').fillna(0)
+                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                            lob_prem = lob_prem.sort_values(prem_period_col)
+                            # Validate periods match the accident years
+                            required_years = list(range(from_dt.year, from_dt.year + n_periods))
+                            prem_years = lob_prem[prem_period_col].astype(int).tolist()
+                            if prem_years != required_years:
+                                st.error(
+                                    f"Premium periods for LOB '{lob}' do not match the triangle accident years.\n"
+                                    f"Required years: {required_years}\n"
+                                    f"Provided years: {prem_years}"
+                                )
+                                return
+                            prems = lob_prem[lob_col_name].tolist()
                     for ac in amount_cols:
                         _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         try:
@@ -934,6 +966,10 @@ def render_capecod_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
+# =============================================================================
+#  BF — updated with wide‑format premiums & period validation, LOB filtering
+# =============================================================================
+
 def render_bf_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson - IBNR</h1><p>Multi-LDF Methods with Expected Loss Ratio</p></div>', unsafe_allow_html=True)
@@ -942,7 +978,7 @@ def render_bf_calculator():
     with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bf_fd")
     with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bf_td")
     claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="bf_cf")
-    prem_file = st.file_uploader("Premiums Data (LOB, Premium Amount) - Optional", type=["csv", "xlsx", "xls"], key="bf_pf")
+    prem_file = st.file_uploader("Premiums Data (Dev_Period + LOB columns) - Optional", type=["csv", "xlsx", "xls"], key="bf_pf")
     if claims_file is None: st.info("Upload claims data file."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
     try:
         df = read_uploaded_file(claims_file)
@@ -961,16 +997,25 @@ def render_bf_calculator():
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
-        lobs = sorted(df[lob_col].dropna().unique())
-        prem_df = None; prem_lob_col = None; prem_amt_col = None
+        lobs = sorted(df[lob_col].dropna().unique())   # <-- unique LOB list
+
+        prem_df = None; prem_period_col = None; selected_lob_cols = []
         if prem_file is not None:
             prem_df = read_uploaded_file(prem_file)
             prem_df.columns = prem_df.columns.astype(str).str.strip()
             st.dataframe(prem_df.head(3), use_container_width=True)
             p_cols = prem_df.columns.tolist()
             c1, c2 = st.columns(2)
-            with c1: prem_lob_col = st.selectbox("LOB Column (Premiums)", p_cols, key="bf_prem_lob")
-            with c2: prem_amt_col = st.selectbox("Premium Amount Column", p_cols, key="bf_prem_amt")
+            with c1:
+                prem_period_col = st.selectbox("Development Period Column", p_cols, key="bf_prem_period")
+            with c2:
+                # Only show columns that match (case-insensitively) the claims LOBs
+                lob_candidates = [c for c in p_cols if c != prem_period_col
+                                  and any(c.strip().lower() == lob.strip().lower() for lob in lobs)]
+                if not lob_candidates:
+                    st.warning("No premium columns matched the LOBs found in claims data.")
+                selected_lob_cols = st.multiselect("LOB Premium Columns (one per LOB)", lob_candidates, key="bf_prem_lobs")
+
         st.markdown("### Expected Loss Ratios (ELR) per LOB")
         elr_cols = st.columns(min(len(lobs), 4))
         elr_dict = {}
@@ -1017,13 +1062,28 @@ def render_bf_calculator():
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
                     prems = [1.0] * n_periods
-                    if prem_df is not None and prem_lob_col and prem_amt_col:
-                        prem_sub = prem_df[prem_df[prem_lob_col].astype(str) == str(lob)].copy()
-                        if len(prem_sub) > 0:
-                            prem_sub[prem_amt_col] = pd.to_numeric(prem_sub[prem_amt_col], errors='coerce').fillna(0)
-                            prems = prem_sub[prem_amt_col].tolist()
-                            if len(prems) < n_periods: prems.extend([prems[-1]] * (n_periods - len(prems)))
-                            elif len(prems) > n_periods: prems = prems[:n_periods]
+                    if prem_file is not None and prem_period_col and selected_lob_cols:
+                        lob_col_name = None
+                        for col in selected_lob_cols:
+                            if col.strip().lower() == lob.strip().lower():
+                                lob_col_name = col
+                                break
+                        if lob_col_name is not None:
+                            lob_prem = prem_df[[prem_period_col, lob_col_name]].copy()
+                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                            lob_prem[lob_col_name] = pd.to_numeric(lob_prem[lob_col_name], errors='coerce').fillna(0)
+                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                            lob_prem = lob_prem.sort_values(prem_period_col)
+                            required_years = list(range(from_dt.year, from_dt.year + n_periods))
+                            prem_years = lob_prem[prem_period_col].astype(int).tolist()
+                            if prem_years != required_years:
+                                st.error(
+                                    f"Premium periods for LOB '{lob}' do not match the triangle accident years.\n"
+                                    f"Required years: {required_years}\n"
+                                    f"Provided years: {prem_years}"
+                                )
+                                return
+                            prems = lob_prem[lob_col_name].tolist()
                     for ac in amount_cols:
                         _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         try:
@@ -1059,6 +1119,10 @@ def render_bf_calculator():
     except Exception as e: st.error(f"Error: {e}")
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
+
+# =============================================================================
+#  REMAINING CALCULATORS (UNCHANGED)
+# =============================================================================
 
 def render_ulae_calculator():
     show_breadcrumb()
