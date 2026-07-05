@@ -120,7 +120,7 @@ if missing_optional or _IMPORT_ERRORS:
                     st.code(err)
 
 # =============================================================================
-#  UTILITY FUNCTIONS
+#  UTILITY FUNCTIONS (unchanged)
 # =============================================================================
 def _date_filter(df, col, from_date, to_date):
     if not pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -245,7 +245,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
 
 
 # =============================================================================
-#  STREAMLIT CONFIGURATION
+#  STREAMLIT CONFIGURATION (unchanged)
 # =============================================================================
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -313,7 +313,7 @@ st.markdown("""
 
 
 # =============================================================================
-#  SESSION STATE & NAVIGATION
+#  SESSION STATE & NAVIGATION (unchanged)
 # =============================================================================
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'breadcrumb' not in st.session_state: st.session_state.breadcrumb = ['Home']
@@ -651,7 +651,7 @@ def render_percentage_calculator():
 
 
 # =============================================================================
-#  BCL – enhanced with triangles, LDFs, and ultimate claims per LOB
+#  BCL – detailed data moved to Excel export only
 # =============================================================================
 
 def render_bcl_calculator():
@@ -721,13 +721,13 @@ def render_bcl_calculator():
             with st.spinner("Calculating BCL IBNR..."):
                 lobs = sorted(df[lob_col].dropna().unique())
                 all_results = []
-                inc_triangles = {}   # store incremental triangle per LOB (first amount column)
-                ldfs_per_lob = {}    # store selected LDFs per LOB
+                inc_triangles = {}
+                ldfs_per_lob = {}
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
                     for idx, ac in enumerate(amount_cols):
                         inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
-                        if idx == 0:          # capture first amount column only
+                        if idx == 0:
                             inc_triangles[lob] = inc.copy()
                         result = ibnr_bcl.calculate_bcl_ibnr(
                             cum_triangle=cum, start_date=from_dt, period_unit=grain_code,
@@ -750,30 +750,26 @@ def render_bcl_calculator():
             total_ibnr = summary['IBNR'].sum() if 'IBNR' in summary.columns else 0
             st.metric("Total BCL IBNR", f"{total_ibnr:,.2f}")
 
-            # ---- Detailed results per LOB ----
-            st.markdown("### Detailed Results per LOB")
+            # Build export sheets with detailed data
+            export_sheets = {'BCL_Summary': summary, 'BCL_Detail': final_df}
+            # Triangles and LDFs per LOB
             for lob in lobs:
-                with st.expander(f"LOB: {lob}", expanded=False):
-                    # Incremental triangle
-                    if lob in inc_triangles:
-                        st.markdown("**Incremental Claims Triangle**")
-                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
-                    # Development factors
-                    if lob in ldfs_per_lob:
-                        st.markdown("**Selected Development Factors**")
-                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
-                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
-                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
-                    # Ultimate claims
-                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
-                    if not lob_df.empty:
-                        st.markdown("**Ultimate Claims**")
-                        ult_disp = lob_df[['Accident_Period_Label', 'Current_Claims', 'Ultimate_Claims', 'IBNR']].copy()
-                        for c in ['Current_Claims', 'Ultimate_Claims', 'IBNR']:
-                            ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}")
-                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+                if lob in inc_triangles:
+                    tri = inc_triangles[lob].copy()
+                    tri.columns = [f"Dev_{c}" for c in tri.columns]
+                    tri.index = [f"AY_{i}" for i in tri.index]
+                    export_sheets[f"Incremental_{lob}"] = tri.reset_index()
+                if lob in ldfs_per_lob:
+                    ldf_df = pd.DataFrame({
+                        'Dev_Period': [f"{i}-{i+1}" for i in range(len(ldfs_per_lob[lob]))],
+                        'Factor': ldfs_per_lob[lob]
+                    })
+                    export_sheets[f"LDFs_{lob}"] = ldf_df
+                lob_final = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                if not lob_final.empty:
+                    export_sheets[f"Ultimate_{lob}"] = lob_final[['Accident_Period_Label', 'Current_Claims', 'Ultimate_Claims', 'IBNR']]
 
-            output, ext, mime = build_download_payload({'BCL_Summary': summary, 'BCL_Detail': final_df})
+            output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.{ext}", mime=mime, key="bcl_dl")
     except Exception as e: st.error(f"Error: {e}")
@@ -781,7 +777,7 @@ def render_bcl_calculator():
 
 
 # =============================================================================
-#  CAPE COD – enhanced with triangles, LDFs, and ultimate claims per LOB
+#  CAPE COD – detailed data moved to Excel export only
 # =============================================================================
 
 def render_capecod_calculator():
@@ -916,34 +912,26 @@ def render_capecod_calculator():
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
 
-            # ---- Detailed results per LOB ----
-            st.markdown("### Detailed Results per LOB")
+            # Build export sheets
+            export_sheets = {'CapeCod_Summary': summary, 'CapeCod_Detail': final_df}
             for lob in lobs:
-                with st.expander(f"LOB: {lob}", expanded=False):
-                    if lob in inc_triangles:
-                        st.markdown("**Incremental Claims Triangle**")
-                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
-                    if lob in ldfs_per_lob and ldfs_per_lob[lob]:
-                        st.markdown("**Selected Development Factors**")
-                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
-                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
-                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
-                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
-                    if not lob_df.empty:
-                        st.markdown("**Ultimate Claims**")
-                        # Cape Cod results may use different column names; try common ones
-                        ult_cols = [c for c in lob_df.columns if 'Ultimate' in c or 'Current' in c or 'IBNR' in c]
-                        if 'Accident_Period_Label' in lob_df.columns:
-                            disp_cols = ['Accident_Period_Label'] + [c for c in ult_cols if c in lob_df.columns]
-                        else:
-                            disp_cols = ult_cols
-                        ult_disp = lob_df[disp_cols].copy()
-                        for c in ult_disp.columns:
-                            if c != 'Accident_Period_Label':
-                                ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
-                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+                if lob in inc_triangles:
+                    tri = inc_triangles[lob].copy()
+                    tri.columns = [f"Dev_{c}" for c in tri.columns]
+                    tri.index = [f"AY_{i}" for i in tri.index]
+                    export_sheets[f"Incremental_{lob}"] = tri.reset_index()
+                if lob in ldfs_per_lob and ldfs_per_lob[lob]:
+                    ldf_df = pd.DataFrame({
+                        'Dev_Period': [f"{i}-{i+1}" for i in range(len(ldfs_per_lob[lob]))],
+                        'Factor': ldfs_per_lob[lob]
+                    })
+                    export_sheets[f"LDFs_{lob}"] = ldf_df
+                lob_final = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                if not lob_final.empty:
+                    cols_to_export = ['Accident_Period_Label', current_col, ibnr_col]
+                    export_sheets[f"Ultimate_{lob}"] = lob_final[cols_to_export]
 
-            output, ext, mime = build_download_payload({'CapeCod_Summary': summary, 'CapeCod_Detail': final_df})
+            output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
     except Exception as e: st.error(f"Error: {e}")
@@ -951,7 +939,7 @@ def render_capecod_calculator():
 
 
 # =============================================================================
-#  BF – enhanced with triangles, LDFs, and ultimate claims per LOB
+#  BF – detailed data moved to Excel export only
 # =============================================================================
 
 def render_bf_calculator():
@@ -1094,32 +1082,26 @@ def render_bf_calculator():
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
 
-            # ---- Detailed results per LOB ----
-            st.markdown("### Detailed Results per LOB")
+            # Build export sheets
+            export_sheets = {'BF_Summary': summary, 'BF_Detail': final_df}
             for lob in lobs:
-                with st.expander(f"LOB: {lob}", expanded=False):
-                    if lob in inc_triangles:
-                        st.markdown("**Incremental Claims Triangle**")
-                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
-                    if lob in ldfs_per_lob and ldfs_per_lob[lob]:
-                        st.markdown("**Selected Development Factors**")
-                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
-                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
-                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
-                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
-                    if not lob_df.empty:
-                        st.markdown("**Ultimate Claims**")
-                        ult_disp = lob_df[['Accident_Period_Label', 'Current_Claims', 'BF_IBNR']].copy()
-                        if 'Ultimate_Claims' in lob_df.columns:
-                            ult_disp['Ultimate_Claims'] = lob_df['Ultimate_Claims']
-                        else:
-                            ult_disp['Ultimate_Claims'] = lob_df['Current_Claims'] + lob_df['BF_IBNR']
-                        for c in ['Current_Claims', 'BF_IBNR', 'Ultimate_Claims']:
-                            if c in ult_disp.columns:
-                                ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}")
-                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+                if lob in inc_triangles:
+                    tri = inc_triangles[lob].copy()
+                    tri.columns = [f"Dev_{c}" for c in tri.columns]
+                    tri.index = [f"AY_{i}" for i in tri.index]
+                    export_sheets[f"Incremental_{lob}"] = tri.reset_index()
+                if lob in ldfs_per_lob and ldfs_per_lob[lob]:
+                    ldf_df = pd.DataFrame({
+                        'Dev_Period': [f"{i}-{i+1}" for i in range(len(ldfs_per_lob[lob]))],
+                        'Factor': ldfs_per_lob[lob]
+                    })
+                    export_sheets[f"LDFs_{lob}"] = ldf_df
+                lob_final = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                if not lob_final.empty:
+                    cols_to_export = ['Accident_Period_Label', current_col, ibnr_col]
+                    export_sheets[f"Ultimate_{lob}"] = lob_final[cols_to_export]
 
-            output, ext, mime = build_download_payload({'BF_Summary': summary, 'BF_Detail': final_df})
+            output, ext, mime = build_download_payload(export_sheets)
             sc = sanitize_filename(client_name)
             st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.{ext}", mime=mime, key="bf_dl")
     except Exception as e: st.error(f"Error: {e}")
