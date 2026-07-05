@@ -15,7 +15,7 @@ from scipy import interpolate
 from scipy import stats as scipy_stats
 
 # =============================================================================
-#  ROBUST PATH & IMPORT SYSTEM
+#  ROBUST PATH & IMPORT SYSTEM (with diagnostic error capture)
 # =============================================================================
 import sys
 import os
@@ -27,6 +27,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
+# ------------------------------------------------------------
+#  IMPORT DIAGNOSTICS DICTIONARY – captures any import error
+#  so it can be displayed in the Module Status expander
+# ------------------------------------------------------------
+_IMPORT_ERRORS = {}
+
 def import_file_glob(relative_pattern):
     search_pattern = os.path.join(BASE_DIR, relative_pattern.replace('/', os.sep))
     matched_files = glob.glob(search_pattern)
@@ -34,17 +40,23 @@ def import_file_glob(relative_pattern):
         search_pattern = os.path.join(BASE_DIR, relative_pattern.replace('/', os.sep).replace(' ', '?'))
         matched_files = glob.glob(search_pattern)
     if not matched_files:
+        _IMPORT_ERRORS[relative_pattern] = "File not found"
         return None
     abs_path = matched_files[0]
     module_name = os.path.splitext(os.path.basename(abs_path))[0]
     try:
         spec = importlib.util.spec_from_file_location(module_name, abs_path)
         if spec is None:
+            _IMPORT_ERRORS[relative_pattern] = "spec_from_file_location returned None"
             return None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        # Clear any previous error for this pattern on success
+        _IMPORT_ERRORS.pop(relative_pattern, None)
         return module
-    except Exception:
+    except Exception as e:
+        import traceback
+        _IMPORT_ERRORS[relative_pattern] = traceback.format_exc()
         return None
 
 # --- Load all engine modules ---
@@ -79,7 +91,7 @@ if full_engine is None:
             pass
 
 # =============================================================================
-#  MODULE STATUS CHECK
+#  MODULE STATUS CHECK (now with import error details)
 # =============================================================================
 module_status = {
     "UPR Engine": upr_engine,
@@ -108,11 +120,19 @@ if missing_critical:
 
 missing_optional = [name for name, mod in module_status.items() 
                     if mod is None and name not in critical_modules]
-if missing_optional:
+
+# ---- Show missing optional modules AND their import errors ----
+if missing_optional or _IMPORT_ERRORS:
     with st.expander("Module Status", expanded=False):
-        st.warning("Some optional modules could not be loaded:")
-        for mod in missing_optional:
-            st.write(f"  - {mod}")
+        if missing_optional:
+            st.warning("Some optional modules could not be loaded:")
+            for mod in missing_optional:
+                st.write(f"  - {mod}")
+        if _IMPORT_ERRORS:
+            st.error("Import errors detected:")
+            for pattern, err in _IMPORT_ERRORS.items():
+                with st.expander(f"Error importing: {pattern}"):
+                    st.code(err)
 
 # =============================================================================
 #  UTILITY FUNCTIONS
@@ -143,17 +163,9 @@ def map_columns(df, required_fields, prefix):
 
 # =============================================================================
 #  CACHED / MEMORY-OPTIMIZED FILE LOADING
-#  Streamlit reruns the whole script on every widget interaction. Without
-#  caching, a large upload gets re-read from disk and re-parsed on every
-#  single click (checkbox, selectbox, etc.), which is the single biggest
-#  drag on responsiveness for big files. @st.cache_data keys on the file's
-#  content, so the parse only happens once per distinct upload.
 # =============================================================================
 
 def _optimize_dtypes(df, category_threshold=0.5, category_max_unique=10000):
-    """Downcast numeric columns and convert low-cardinality text columns to
-    'category'. Cuts memory 30-50% on typical claims/premium files and
-    speeds up downstream groupby/merge/filter operations."""
     for col in df.columns:
         dtype = df[col].dtype
         if pd.api.types.is_float_dtype(dtype):
@@ -170,10 +182,6 @@ def _optimize_dtypes(df, category_threshold=0.5, category_max_unique=10000):
 
 @st.cache_data(show_spinner=False)
 def read_uploaded_file(uploaded_file, optimize=True):
-    """Cached read of a CSV/Excel upload: strips column names, drops
-    'Unnamed:' columns, and (optionally) optimizes dtypes. Re-running the
-    app (e.g. toggling a checkbox) reuses this result instead of
-    re-parsing the file from scratch."""
     name = uploaded_file.name
     df = pd.read_csv(uploaded_file) if name.endswith('.csv') else pd.read_excel(uploaded_file)
     unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
@@ -186,25 +194,11 @@ def read_uploaded_file(uploaded_file, optimize=True):
 
 @st.cache_data(show_spinner=False)
 def read_uploaded_triangle(uploaded_file):
-    """Cached read of a cumulative-triangle upload (first column = AY
-    labels, index_col=0)."""
     name = uploaded_file.name
     df = pd.read_csv(uploaded_file, index_col=0) if name.endswith('.csv') else pd.read_excel(uploaded_file, index_col=0)
     return df.apply(pd.to_numeric, errors='coerce')
 
 def build_download_payload(sheets: dict, row_threshold: int = 100_000):
-    """Build a downloadable payload for one or more named DataFrames.
-
-    For small results this writes a single .xlsx via openpyxl (unchanged
-    behavior/format). Once the combined row count crosses row_threshold,
-    openpyxl becomes noticeably slow and memory-hungry, so instead this
-    zips one CSV per sheet -- much faster to build and download for large
-    detail exports, at the cost of losing the multi-tab Excel format only
-    when the data is big enough that it wouldn't open comfortably in
-    Excel anyway.
-
-    Returns (bytes_io, file_extension, mime_type).
-    """
     total_rows = sum(len(df) for df in sheets.values())
     if total_rows <= row_threshold:
         output = BytesIO()
@@ -296,25 +290,11 @@ st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", i
 
 st.markdown("""
 <style>
-    /* ---- Global box model & typography reset ----
-       box-sizing:border-box on every element stops padding/border from
-       silently expanding elements past their container (the #1 cause of
-       text spilling over card/button edges and overlapping neighbours). */
+    /* ---- Global box model & typography reset ---- */
     *, *::before, *::after { box-sizing: border-box !important; }
 
-    /* ---- No side panel ----
-       The app has no sidebar content; hide the sidebar and its
-       expand/collapse arrow control outright so it can never render
-       (including the garbled icon-font text glitch it was producing). */
     [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
 
-    /* ---- Protect icon fonts from the serif override ----
-       The h1..label rule below forces every heading/paragraph/div/span to
-       the serif font. Streamlit's built-in icons (arrows, chevrons, etc.)
-       are rendered as ligature text in a span using an icon font; forcing
-       serif onto that span breaks the ligature and prints raw text like
-       "keyboard_double_arrow_right" instead of the glyph. Excluding icon
-       spans keeps every icon in the app rendering correctly. */
     [data-testid="stIconMaterial"], span[class*="material-symbols"], span[class*="material-icons"] {
         font-family: 'Material Symbols Rounded', 'Material Icons' !important;
     }
@@ -328,18 +308,10 @@ st.markdown("""
         word-break: break-word;
     }
 
-    /* ---- Hero banner ---- */
     .hero { background: linear-gradient(135deg, #000000 0%, #1a1a2e 100%); color: #FFFFFF; padding: 2.5rem 2rem; text-align: center; border-bottom: 3px solid #4A90D9; margin-bottom: 2rem; }
     .hero h1 { color: #4A90D9; font-size: 2.5rem; margin: 0 0 0.5rem 0; line-height: 1.2; }
     .hero p { font-size: 1.1rem; max-width: 800px; margin: 0 auto; line-height: 1.5; }
 
-    /* ---- Equal-height card rows ----
-       Streamlit renders each st.columns() cell independently, so a card's
-       companion button used to land at a different vertical position in
-       every column whenever the card text was a different length. Forcing
-       the row and its columns to stretch, then letting the card grow to
-       fill the column, keeps every card AND every button perfectly
-       aligned across the row regardless of text length. */
     div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
     div[data-testid="column"] { display: flex !important; flex-direction: column !important; }
     div[data-testid="column"] > div[data-testid="stVerticalBlock"] { display: flex; flex-direction: column; flex: 1 1 auto; height: 100%; }
@@ -376,14 +348,9 @@ st.markdown("""
     .status-badge.available { background-color: #DFF3E3; color: #1E7B34; }
     .status-badge.unavailable { background-color: #F5DADA; color: #A32626; }
 
-    /* ---- Breadcrumb ---- */
     .breadcrumb { background-color: #F0F0F0; padding: 0.5rem 1rem; border-radius: 5px; margin-bottom: 1rem; font-size: 0.85rem; border-left: 4px solid #4A90D9; line-height: 1.6; }
     .breadcrumb span { color: #4A90D9; font-weight: bold; }
 
-    /* ---- Buttons ----
-       min-height + normal white-space + line-height stop longer button
-       labels from being clipped, squashed, or overlapping the button's
-       own padding on narrower screens. */
     .stButton > button {
         background-color: #4A90D9 !important;
         color: #FFFFFF !important;
@@ -409,10 +376,6 @@ st.markdown("""
     .report-meta td { padding: 4px 8px; line-height: 1.4; }
     .footer { background-color: #000000; color: #FFFFFF; text-align: center; padding: 1.5rem; border-top: 3px solid #4A90D9; margin-top: 3rem; font-size: 0.9rem; line-height: 1.4; }
 
-    /* ---- Built-in Streamlit widgets ----
-       These override Streamlit's own sizing just enough so the custom
-       serif font (which is wider than the default) doesn't push labels
-       and values into each other inside metrics, selects, and inputs. */
     div[data-testid="stMetric"] { padding: 0.5rem 0.75rem; }
     div[data-testid="stMetricLabel"] { white-space: normal !important; line-height: 1.3 !important; }
     div[data-testid="stMetricValue"] { line-height: 1.3 !important; overflow-wrap: break-word; font-size: 1.6rem !important; }
@@ -428,7 +391,6 @@ st.markdown("""
     div[data-baseweb="select"] { line-height: 1.4 !important; }
     div[data-baseweb="select"] > div { min-height: 42px; }
 
-    /* Dataframes / tables: keep long header text from overlapping cells */
     div[data-testid="stDataFrame"] * { line-height: 1.4 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -969,10 +931,6 @@ def render_capecod_calculator():
                     prem_sub = prem_df[prem_df[prem_lob_col] == lob].copy()
                     prem_sub[prem_amt_col] = pd.to_numeric(prem_sub[prem_amt_col], errors='coerce').fillna(0)
                     prems = []
-                    # Vectorized substring match instead of .apply(axis=1) per year --
-                    # same "does this row's LOB text contain the year" logic, but done
-                    # as a single pandas string op instead of scanning row-by-row in
-                    # Python once per year in the valuation window.
                     prem_lob_str = prem_sub[prem_lob_col].astype(str)
                     for yr in range(from_dt.year, from_dt.year + n_periods):
                         mask = prem_lob_str.str.contains(str(yr), na=False, regex=False)
@@ -1208,10 +1166,6 @@ def render_npr_calculator():
             lic_df[ibnr_col] = pd.to_numeric(lic_df[ibnr_col], errors='coerce').fillna(0)
             lic_df[ocr_col] = pd.to_numeric(lic_df[ocr_col], errors='coerce').fillna(0)
             lic_df['Total_LIC'] = lic_df[ibnr_col] + lic_df[ocr_col]
-            # Vectorized cross join (every reinsurer x every portfolio) instead of a
-            # nested Python iterrows() loop -- same result, but O(n*m) work happens
-            # in pandas/NumPy rather than row-by-row Python, which matters a lot
-            # once either file has more than a few hundred rows.
             ri_small = ri_df[[name_col, pd_col, share_col]].rename(
                 columns={name_col: 'Reinsurer', pd_col: 'PD', share_col: 'Share'})
             lic_small = lic_df[[port_col, 'Total_LIC']].rename(columns={port_col: 'Portfolio'})
