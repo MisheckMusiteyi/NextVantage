@@ -134,6 +134,19 @@ def periods_per_year(grain):
 def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', '', name).strip() or "Client"
 
+def _check_duplicate_columns(df, filename=None):
+    """Raise a clear, actionable error if the uploaded file has duplicate column headers."""
+    cols = pd.Series(df.columns.astype(str))
+    dupes = cols[cols.duplicated()].unique().tolist()
+    if dupes:
+        where = f" in '{filename}'" if filename else ""
+        dupe_list = ", ".join(f"'{d}'" for d in dupes)
+        raise ValueError(
+            f"Duplicate column name(s) found{where}: {dupe_list}. "
+            f"Please rename or remove the repeated column(s) in your source file and re-upload. "
+            f"Duplicate headers can cause incorrect groupings, totals, or selections."
+        )
+
 def map_columns(df, required_fields, prefix):
     cols = df.columns.tolist()
     mapping = {}
@@ -164,6 +177,7 @@ def read_uploaded_file(uploaded_file, optimize=True):
     unnamed = [c for c in df.columns if str(c).startswith('Unnamed:')]
     if unnamed: df = df.drop(columns=unnamed)
     df.columns = df.columns.astype(str).str.strip()
+    _check_duplicate_columns(df, filename=name)
     if optimize: df = _optimize_dtypes(df)
     return df
 
@@ -171,6 +185,7 @@ def read_uploaded_file(uploaded_file, optimize=True):
 def read_uploaded_triangle(uploaded_file):
     name = uploaded_file.name
     df = pd.read_csv(uploaded_file, index_col=0) if name.endswith('.csv') else pd.read_excel(uploaded_file, index_col=0)
+    _check_duplicate_columns(df, filename=name)
     return df.apply(pd.to_numeric, errors='coerce')
 
 def build_download_payload(sheets: dict, row_threshold: int = 100_000):
@@ -1234,7 +1249,7 @@ def render_npr_calculator():
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- Mack RA (unchanged) ----------
+# ---------- Mack RA (updated: claims-level input only) ----------
 def run_mack_calculation(triangle, confidence, z_score, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
     with st.spinner("Calculating Mack Chain Ladder..."):
         n_ay, n_dev = triangle.shape
@@ -1277,66 +1292,46 @@ def render_mack_calculator():
     with c2: confidence = st.number_input("Confidence Level (%)", 50.0, 99.9, 75.0, 1.0, key="mck_cl") / 100.0
     z_score = scipy_stats.norm.ppf(confidence)
     st.info(f"z-score: {z_score:.3f}")
-    input_type = st.radio("Input Data Type", ["Claims-Level Data", "Cumulative Triangle"], key="mck_input_type")
-    if input_type == "Cumulative Triangle":
-        uploaded = st.file_uploader("Upload Cumulative Claims Triangle (CSV/Excel)", type=["csv", "xlsx", "xls"], key="mck_f_tri")
-        st.caption("First column = AY labels, remaining = cumulative claims.")
-        if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
-        try:
-            raw = read_uploaded_triangle(uploaded)
-            st.dataframe(raw, use_container_width=True)
-            grain = "Y"; ppy = 1
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="mck_gr")
+    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="mck_fd")
+    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="mck_td")
+    grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
+    uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="mck_f_cl")
+    if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+    try:
+        df = read_uploaded_file(uploaded)
+        df.columns = df.columns.astype(str).str.strip()
+        st.dataframe(df.head(5), use_container_width=True)
+        cols = df.columns.tolist()
+        c1, c2 = st.columns(2)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="mck_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="mck_rd")
+        amount_col = st.selectbox("Amount Column", cols, key="mck_amt")
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+        df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
+        df = df.dropna(subset=[loss_col, rep_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        df = _date_filter(df, loss_col, from_date, to_date)
+        n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
+        if engine_utils is not None:
+            _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
+            st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
             st.markdown("### Adjustments")
             c1, c2 = st.columns(2)
-            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="mck_inf_tri")
-            with c2: use_discounting = st.checkbox("Apply Discounting", key="mck_disc_tri")
+            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="mck_inf_cl")
+            with c2: use_discounting = st.checkbox("Apply Discounting", key="mck_disc_cl")
             cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "mck_tri")
-            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "mck_tri")
-            if st.button("Calculate Mack RA", key="mck_run_tri", use_container_width=True):
-                run_mack_calculation(raw, confidence, z_score, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain, origin_date=pd.Timestamp('2020-01-01'))
-        except Exception as e: st.error(f"Error: {e}")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="mck_gr")
-        with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="mck_fd")
-        with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="mck_td")
-        grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
-        uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="mck_f_cl")
-        if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
-        try:
-            df = read_uploaded_file(uploaded)
-            df.columns = df.columns.astype(str).str.strip()
-            st.dataframe(df.head(5), use_container_width=True)
-            cols = df.columns.tolist()
-            c1, c2 = st.columns(2)
-            with c1: loss_col = st.selectbox("Loss Date", cols, key="mck_ld")
-            with c2: rep_col = st.selectbox("Report Date", cols, key="mck_rd")
-            amount_col = st.selectbox("Amount Column", cols, key="mck_amt")
-            df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
-            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
-            df = df.dropna(subset=[loss_col, rep_col])
-            from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
-            df = _date_filter(df, loss_col, from_date, to_date)
-            n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
-            if engine_utils is not None:
-                _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
-                st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
-                st.markdown("### Adjustments")
-                c1, c2 = st.columns(2)
-                with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="mck_inf_cl")
-                with c2: use_discounting = st.checkbox("Apply Discounting", key="mck_disc_cl")
-                cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-                if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "mck_cl")
-                if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "mck_cl")
-                if st.button("Calculate Mack RA", key="mck_run_cl", use_container_width=True):
-                    run_mack_calculation(cum_triangle, confidence, z_score, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
-            else: st.error("Engine utils not available.")
-        except Exception as e: st.error(f"Error: {e}")
+            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "mck_cl")
+            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "mck_cl")
+            if st.button("Calculate Mack RA", key="mck_run_cl", use_container_width=True):
+                run_mack_calculation(cum_triangle, confidence, z_score, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
+        else: st.error("Engine utils not available.")
+    except Exception as e: st.error(f"Error: {e}")
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
-# ---------- Bootstrap RA (engine‑only, no fallback) ----------
+# ---------- Bootstrap RA (updated: claims-level input only) ----------
 def run_bootstrap_calculation(triangle, confidence, n_iter, add_pv, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
     with st.spinner(f"Running {n_iter:,} bootstrap iterations..."):
         n_ay, n_dev = triangle.shape
@@ -1393,62 +1388,42 @@ def render_bootstrap_calculator():
     with c2: confidence = st.number_input("Confidence Level (%)", 50.0, 99.5, 75.0, 1.0, key="bts_cl") / 100.0
     with c3: n_iter = st.number_input("Iterations", 100, 10000, 1000, 100, key="bts_it")
     with c4: add_pv = st.checkbox("Process Variance", value=True, key="bts_pv")
-    input_type = st.radio("Input Data Type", ["Claims-Level Data", "Cumulative Triangle"], key="bts_input_type")
-    if input_type == "Cumulative Triangle":
-        uploaded = st.file_uploader("Upload Cumulative Claims Triangle (CSV/Excel)", type=["csv", "xlsx", "xls"], key="bts_f_tri")
-        st.caption("First column = AY labels, remaining = cumulative claims.")
-        if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
-        try:
-            raw = read_uploaded_triangle(uploaded)
-            st.dataframe(raw, use_container_width=True)
-            grain = "Y"; ppy = 1
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="bts_gr")
+    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bts_fd")
+    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bts_td")
+    grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
+    uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="bts_f_cl")
+    if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+    try:
+        df = read_uploaded_file(uploaded)
+        df.columns = df.columns.astype(str).str.strip()
+        st.dataframe(df.head(5), use_container_width=True)
+        cols = df.columns.tolist()
+        c1, c2 = st.columns(2)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="bts_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="bts_rd")
+        amount_col = st.selectbox("Amount Column", cols, key="bts_amt")
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+        df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
+        df = df.dropna(subset=[loss_col, rep_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        df = _date_filter(df, loss_col, from_date, to_date)
+        n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
+        if engine_utils is not None:
+            _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
+            st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
             st.markdown("### Adjustments")
             c1, c2 = st.columns(2)
-            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bts_inf_tri")
-            with c2: use_discounting = st.checkbox("Apply Discounting", key="bts_disc_tri")
+            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bts_inf_cl")
+            with c2: use_discounting = st.checkbox("Apply Discounting", key="bts_disc_cl")
             cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "bts_tri")
-            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "bts_tri")
-            if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_tri", use_container_width=True):
-                run_bootstrap_calculation(raw, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain, origin_date=pd.Timestamp('2020-01-01'))
-        except Exception as e: st.error(f"Error: {e}")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="bts_gr")
-        with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bts_fd")
-        with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bts_td")
-        grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
-        uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="bts_f_cl")
-        if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
-        try:
-            df = read_uploaded_file(uploaded)
-            df.columns = df.columns.astype(str).str.strip()
-            st.dataframe(df.head(5), use_container_width=True)
-            cols = df.columns.tolist()
-            c1, c2 = st.columns(2)
-            with c1: loss_col = st.selectbox("Loss Date", cols, key="bts_ld")
-            with c2: rep_col = st.selectbox("Report Date", cols, key="bts_rd")
-            amount_col = st.selectbox("Amount Column", cols, key="bts_amt")
-            df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
-            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
-            df = df.dropna(subset=[loss_col, rep_col])
-            from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
-            df = _date_filter(df, loss_col, from_date, to_date)
-            n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
-            if engine_utils is not None:
-                _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
-                st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
-                st.markdown("### Adjustments")
-                c1, c2 = st.columns(2)
-                with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bts_inf_cl")
-                with c2: use_discounting = st.checkbox("Apply Discounting", key="bts_disc_cl")
-                cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-                if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "bts_cl")
-                if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "bts_cl")
-                if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_cl", use_container_width=True):
-                    run_bootstrap_calculation(cum_triangle, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
-            else: st.error("Engine utils not available.")
-        except Exception as e: st.error(f"Error: {e}")
+            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "bts_cl")
+            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "bts_cl")
+            if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_cl", use_container_width=True):
+                run_bootstrap_calculation(cum_triangle, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
+        else: st.error("Engine utils not available.")
+    except Exception as e: st.error(f"Error: {e}")
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
