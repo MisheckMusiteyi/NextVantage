@@ -336,7 +336,7 @@ def back_button(target_page, target_breadcrumb):
 
 
 # =============================================================================
-#  NAVIGATION PAGES
+#  NAVIGATION PAGES (unchanged)
 # =============================================================================
 def render_home():
     st.markdown('<div class="hero"><h1>Next Vantage</h1><p>Comprehensive Actuarial Reserving Toolkit - IFRS 17 Compliant<br>African Actuarial Consultants</p></div>', unsafe_allow_html=True)
@@ -432,7 +432,7 @@ def render_risk_adjustment():
 
 
 # =============================================================================
-#  INDIVIDUAL CALCULATORS
+#  INDIVIDUAL CALCULATORS (UPR, Loss Component, OCR, Percentage unchanged)
 # =============================================================================
 
 def render_upr_calculator():
@@ -650,6 +650,10 @@ def render_percentage_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
+# =============================================================================
+#  BCL – enhanced with triangles, LDFs, and ultimate claims per LOB
+# =============================================================================
+
 def render_bcl_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) - IBNR</h1><p>Multi-LDF Methods with Inflation & Discounting Support</p></div>', unsafe_allow_html=True)
@@ -717,10 +721,14 @@ def render_bcl_calculator():
             with st.spinner("Calculating BCL IBNR..."):
                 lobs = sorted(df[lob_col].dropna().unique())
                 all_results = []
+                inc_triangles = {}   # store incremental triangle per LOB (first amount column)
+                ldfs_per_lob = {}    # store selected LDFs per LOB
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    for ac in amount_cols:
-                        _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
+                    for idx, ac in enumerate(amount_cols):
+                        inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain_code, n_periods)
+                        if idx == 0:          # capture first amount column only
+                            inc_triangles[lob] = inc.copy()
                         result = ibnr_bcl.calculate_bcl_ibnr(
                             cum_triangle=cum, start_date=from_dt, period_unit=grain_code,
                             selected_ldf_method=selected_method,
@@ -728,6 +736,8 @@ def render_bcl_calculator():
                             per_period_rates=per_period_rates,
                             use_discounting=use_discounting, spot_rates=spot_rates, flat_rate=flat_rate
                         )
+                        if idx == 0:
+                            ldfs_per_lob[lob] = result['dev_factors']
                         res_df = result['results_df']; res_df['LOB'] = lob; res_df['Amount_Col'] = ac
                         all_results.append(res_df)
                 final_df = pd.concat(all_results, ignore_index=True)
@@ -739,6 +749,30 @@ def render_bcl_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary['IBNR'].sum() if 'IBNR' in summary.columns else 0
             st.metric("Total BCL IBNR", f"{total_ibnr:,.2f}")
+
+            # ---- Detailed results per LOB ----
+            st.markdown("### Detailed Results per LOB")
+            for lob in lobs:
+                with st.expander(f"LOB: {lob}", expanded=False):
+                    # Incremental triangle
+                    if lob in inc_triangles:
+                        st.markdown("**Incremental Claims Triangle**")
+                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
+                    # Development factors
+                    if lob in ldfs_per_lob:
+                        st.markdown("**Selected Development Factors**")
+                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
+                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
+                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
+                    # Ultimate claims
+                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                    if not lob_df.empty:
+                        st.markdown("**Ultimate Claims**")
+                        ult_disp = lob_df[['Accident_Period_Label', 'Current_Claims', 'Ultimate_Claims', 'IBNR']].copy()
+                        for c in ['Current_Claims', 'Ultimate_Claims', 'IBNR']:
+                            ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}")
+                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+
             output, ext, mime = build_download_payload({'BCL_Summary': summary, 'BCL_Detail': final_df})
             sc = sanitize_filename(client_name)
             st.download_button("Download BCL Results", data=output, file_name=f"{sc}_BCL_IBNR.{ext}", mime=mime, key="bcl_dl")
@@ -747,7 +781,7 @@ def render_bcl_calculator():
 
 
 # =============================================================================
-#  CAPE COD — with per-LOB premium mapping, count-only validation
+#  CAPE COD – enhanced with triangles, LDFs, and ultimate claims per LOB
 # =============================================================================
 
 def render_capecod_calculator():
@@ -780,16 +814,14 @@ def render_capecod_calculator():
         df = df.dropna(subset=[loss_col, rep_col])
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
-        lobs = sorted(df[lob_col].dropna().unique())   # unique LOBs from claims
+        lobs = sorted(df[lob_col].dropna().unique())
 
-        # Premium mapping
         p_cols = prem_df.columns.tolist()
         prem_period_col = st.selectbox("Development Period Column", p_cols, key="cc_prem_period")
         avail_cols = [c for c in p_cols if c != prem_period_col]
         if len(avail_cols) < len(lobs):
             st.error(f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).")
             return
-        # Map each claims LOB to a premium column
         lob_mapping = {}
         st.markdown("**Map each Line of Business to a premium column:**")
         for lob in lobs:
@@ -836,9 +868,10 @@ def render_capecod_calculator():
             if ibnr_cc is None or engine_utils is None: st.error("Required engines not available."); return
             with st.spinner("Calculating Cape Cod IBNR..."):
                 all_results = []
+                inc_triangles = {}
+                ldfs_per_lob = {}
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    # Extract premiums for this LOB
                     prems = [1.0] * n_periods
                     prem_col = lob_mapping.get(lob, "None")
                     if prem_col != "None":
@@ -851,8 +884,10 @@ def render_capecod_calculator():
                             st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
                             return
                         prems = lob_prem[prem_col].tolist()
-                    for ac in amount_cols:
-                        _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
+                    for idx, ac in enumerate(amount_cols):
+                        inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
+                        if idx == 0:
+                            inc_triangles[lob] = inc.copy()
                         try:
                             result = ibnr_cc.calculate_cape_cod_ibnr(
                                 cum_triangle=cum, premiums=prems, start_date=from_dt,
@@ -865,6 +900,8 @@ def render_capecod_calculator():
                             result = ibnr_cc.calculate_cape_cod_ibnr(
                                 cum_triangle=cum, premiums=prems, start_date=from_dt, period_unit=grain
                             )
+                        if idx == 0:
+                            ldfs_per_lob[lob] = result.get('dev_factors', [])
                         res_df = result['results_df']; res_df['LOB'] = lob; res_df['Amount_Col'] = ac
                         all_results.append(res_df)
                 final_df = pd.concat(all_results, ignore_index=True)
@@ -878,6 +915,34 @@ def render_capecod_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
+
+            # ---- Detailed results per LOB ----
+            st.markdown("### Detailed Results per LOB")
+            for lob in lobs:
+                with st.expander(f"LOB: {lob}", expanded=False):
+                    if lob in inc_triangles:
+                        st.markdown("**Incremental Claims Triangle**")
+                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
+                    if lob in ldfs_per_lob and ldfs_per_lob[lob]:
+                        st.markdown("**Selected Development Factors**")
+                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
+                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
+                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
+                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                    if not lob_df.empty:
+                        st.markdown("**Ultimate Claims**")
+                        # Cape Cod results may use different column names; try common ones
+                        ult_cols = [c for c in lob_df.columns if 'Ultimate' in c or 'Current' in c or 'IBNR' in c]
+                        if 'Accident_Period_Label' in lob_df.columns:
+                            disp_cols = ['Accident_Period_Label'] + [c for c in ult_cols if c in lob_df.columns]
+                        else:
+                            disp_cols = ult_cols
+                        ult_disp = lob_df[disp_cols].copy()
+                        for c in ult_disp.columns:
+                            if c != 'Accident_Period_Label':
+                                ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}" if pd.notna(x) else "")
+                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+
             output, ext, mime = build_download_payload({'CapeCod_Summary': summary, 'CapeCod_Detail': final_df})
             sc = sanitize_filename(client_name)
             st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
@@ -886,7 +951,7 @@ def render_capecod_calculator():
 
 
 # =============================================================================
-#  BF — with per-LOB premium mapping, count-only validation
+#  BF – enhanced with triangles, LDFs, and ultimate claims per LOB
 # =============================================================================
 
 def render_bf_calculator():
@@ -979,6 +1044,8 @@ def render_bf_calculator():
             if ibnr_bf is None or engine_utils is None: st.error("Required engines not available."); return
             with st.spinner("Calculating BF IBNR..."):
                 all_results = []
+                inc_triangles = {}
+                ldfs_per_lob = {}
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
                     prems = [1.0] * n_periods
@@ -993,8 +1060,10 @@ def render_bf_calculator():
                             st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
                             return
                         prems = lob_prem[prem_col].tolist()
-                    for ac in amount_cols:
-                        _, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
+                    for idx, ac in enumerate(amount_cols):
+                        inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
+                        if idx == 0:
+                            inc_triangles[lob] = inc.copy()
                         try:
                             result = ibnr_bf.calculate_bf_ibnr(
                                 cum_triangle=cum, premiums=prems, elr=elr_dict.get(lob, 0.7),
@@ -1009,6 +1078,8 @@ def render_bf_calculator():
                                 cum_triangle=cum, premiums=prems, elr=elr_dict.get(lob, 0.7),
                                 start_date=from_dt, period_unit=grain
                             )
+                        if idx == 0:
+                            ldfs_per_lob[lob] = result.get('dev_factors', [])
                         res_df = result['results_df']; res_df['LOB'] = lob; res_df['Amount_Col'] = ac
                         all_results.append(res_df)
                 final_df = pd.concat(all_results, ignore_index=True)
@@ -1022,6 +1093,32 @@ def render_bf_calculator():
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
+
+            # ---- Detailed results per LOB ----
+            st.markdown("### Detailed Results per LOB")
+            for lob in lobs:
+                with st.expander(f"LOB: {lob}", expanded=False):
+                    if lob in inc_triangles:
+                        st.markdown("**Incremental Claims Triangle**")
+                        st.dataframe(inc_triangles[lob].style.format("{:,.2f}"), use_container_width=True)
+                    if lob in ldfs_per_lob and ldfs_per_lob[lob]:
+                        st.markdown("**Selected Development Factors**")
+                        ldf_series = pd.Series(ldfs_per_lob[lob], name="Factor")
+                        ldf_series.index = [f"{i}-{i+1}" for i in range(len(ldf_series))]
+                        st.dataframe(ldf_series.to_frame().T, use_container_width=True)
+                    lob_df = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
+                    if not lob_df.empty:
+                        st.markdown("**Ultimate Claims**")
+                        ult_disp = lob_df[['Accident_Period_Label', 'Current_Claims', 'BF_IBNR']].copy()
+                        if 'Ultimate_Claims' in lob_df.columns:
+                            ult_disp['Ultimate_Claims'] = lob_df['Ultimate_Claims']
+                        else:
+                            ult_disp['Ultimate_Claims'] = lob_df['Current_Claims'] + lob_df['BF_IBNR']
+                        for c in ['Current_Claims', 'BF_IBNR', 'Ultimate_Claims']:
+                            if c in ult_disp.columns:
+                                ult_disp[c] = ult_disp[c].apply(lambda x: f"{x:,.2f}")
+                        st.dataframe(ult_disp, use_container_width=True, hide_index=True)
+
             output, ext, mime = build_download_payload({'BF_Summary': summary, 'BF_Detail': final_df})
             sc = sanitize_filename(client_name)
             st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.{ext}", mime=mime, key="bf_dl")
@@ -1030,7 +1127,7 @@ def render_bf_calculator():
 
 
 # =============================================================================
-#  REMAINING CALCULATORS (UNCHANGED)
+#  REMAINING CALCULATORS (ULAE, NPR, Mack, Bootstrap, Full Valuation unchanged)
 # =============================================================================
 
 def render_ulae_calculator():
@@ -1453,7 +1550,7 @@ def render_bootstrap_calculator():
 
 
 # =============================================================================
-#  FULL VALUATION (IFRS 17 Engine only)
+#  FULL VALUATION (IFRS 17 Engine only) – unchanged
 # =============================================================================
 
 def render_full_valuation():
