@@ -435,7 +435,7 @@ def render_risk_adjustment():
 #  INDIVIDUAL CALCULATORS
 # =============================================================================
 
-# ---------- UPR (updated with per-policy export) ----------
+# ---------- UPR (updated with fully earned/unearned fix) ----------
 def render_upr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>UPR Calculator</h1><p>Unearned Premium Reserve - Pro-rata Methods</p></div>', unsafe_allow_html=True)
@@ -474,38 +474,63 @@ def render_upr_calculator():
             df_processed = df_processed.dropna(subset=['Start_Date', 'End_Date'])
             df_processed = df_processed[df_processed['End_Date'] > df_processed['Start_Date']]
             for c in selected_value_cols: df_processed[c] = pd.to_numeric(df_processed[c], errors='coerce').fillna(0)
+
+            # Duration calculations
             df_processed["Duration_Days"] = (df_processed["End_Date"] - df_processed["Start_Date"]).dt.days + 1
             df_processed = df_processed[df_processed["Duration_Days"] > 0]
             if df_processed.empty: st.error("No valid policies after data validation."); return
             st.success(f"{len(df_processed):,} valid policies loaded")
+
             if st.button("Calculate UPR", key="upr_calc", use_container_width=True):
                 with st.spinner("Calculating UPR..."):
-                    df_processed['Remaining_Days'] = (df_processed["End_Date"] - valuation_date_ts).dt.days + 1
-                    df_processed['Remaining_Days'] = np.clip(df_processed['Remaining_Days'], 0, df_processed['Duration_Days'])
-                    if method == "365th": df_processed['Unearned_Portion'] = df_processed['Remaining_Days'] / df_processed['Duration_Days']
+                    # Explicit condition: fully earned / fully unearned
+                    df_processed['Unearned_Portion'] = 0.0
+                    mask_fully_unearned = valuation_date_ts <= df_processed['Start_Date']
+                    mask_fully_earned   = valuation_date_ts >= df_processed['End_Date']
+                    mask_partial        = ~(mask_fully_unearned | mask_fully_earned)
+
+                    df_processed.loc[mask_fully_unearned, 'Unearned_Portion'] = 1.0
+                    df_processed.loc[mask_fully_earned,   'Unearned_Portion'] = 0.0
+
+                    if method == "365th":
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            (df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1
+                        ) / df_processed.loc[mask_partial, "Duration_Days"]
                     elif method == "24th":
                         interval = 365.25 / 24
-                        df_processed['Unearned_Portion'] = (df_processed['Remaining_Days'] / interval) / (df_processed['Duration_Days'] / interval)
-                    else:
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
+                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
+                    else:  # 8th
                         interval = 365.25 / 8
-                        df_processed['Unearned_Portion'] = (df_processed['Remaining_Days'] / interval) / (df_processed['Duration_Days'] / interval)
-                    for c in selected_value_cols: df_processed[f"{c}_UPR"] = df_processed['Unearned_Portion'] * df_processed[c]
+                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
+                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
+                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
+
+                    for c in selected_value_cols:
+                        df_processed[f"{c}_UPR"] = df_processed['Unearned_Portion'] * df_processed[c]
+
                     upr_columns = [f"{c}_UPR" for c in selected_value_cols]
+                    # Aggregated result
                     result = df_processed.groupby(grouping_cols)[upr_columns].sum().reset_index()
                     result.columns = grouping_cols + selected_value_cols
 
                     per_policy_df = None
                     if include_per_policy:
                         per_policy_df = df_processed[[start_date_col, end_date_col] + grouping_cols +
-                                                      ['Duration_Days', 'Remaining_Days']].copy()
-                        per_policy_df['Earned_Duration'] = per_policy_df['Duration_Days'] - per_policy_df['Remaining_Days']
+                                                      ['Duration_Days']].copy()
+                        per_policy_df['Unearned_Duration'] = (
+                            df_processed['Unearned_Portion'] * df_processed['Duration_Days']
+                        ).round(0).astype(int)
+                        per_policy_df['Earned_Duration'] = (
+                            per_policy_df['Duration_Days'] - per_policy_df['Unearned_Duration']
+                        )
                         for c in selected_value_cols:
                             per_policy_df[f"{c}_UPR"] = df_processed[f"{c}_UPR"]
                         per_policy_df = per_policy_df.rename(columns={
                             start_date_col: 'Start_Date',
                             end_date_col: 'End_Date',
-                            'Duration_Days': 'Policy_Duration',
-                            'Remaining_Days': 'Unearned_Duration'
+                            'Duration_Days': 'Policy_Duration'
                         })
 
                 st.markdown("### UPR Results")
@@ -1228,10 +1253,21 @@ def run_mack_calculation(triangle, confidence, z_score, client_name, use_inflati
             )
             res = result['results_df']
         else:
-            dev_factors = []; # ... (fallback implementation)
-            res = pd.DataFrame()
-    # ... (display and download)
-    return res
+            st.error("Mack engine not available.")
+            return
+    st.markdown(f"### Mack RA Results at {confidence:.0%} Confidence")
+    disp = res.copy()
+    for c in ['Current', 'Ultimate', 'IBNR', 'Mack_SE', 'RA']:
+        if c in disp.columns: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+    st.dataframe(disp, use_container_width=True, hide_index=True)
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("Total IBNR", f"{res['IBNR'].sum():,.2f}")
+    with c2: st.metric("Total RA", f"{res['RA'].sum():,.2f}")
+    with c3: st.metric("Total LIC", f"{res['IBNR'].sum() + res['RA'].sum():,.2f}")
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as w: res.to_excel(w, index=False, sheet_name='Mack_RA')
+    output.seek(0); sc = sanitize_filename(client_name)
+    st.download_button("Download Mack Results", data=output, file_name=f"{sc}_Mack_RA.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="mck_dl")
 
 def render_mack_calculator():
     show_breadcrumb()
@@ -1300,10 +1336,54 @@ def render_mack_calculator():
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
-# ---------- Bootstrap RA (unchanged) ----------
+# ---------- Bootstrap RA (engine‑only, no fallback) ----------
 def run_bootstrap_calculation(triangle, confidence, n_iter, add_pv, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
-    # ... (fallback implementation)
-    pass
+    with st.spinner(f"Running {n_iter:,} bootstrap iterations..."):
+        n_ay, n_dev = triangle.shape
+        C = triangle.values.copy().astype(float)
+
+        if bootstrap_engine is None or not hasattr(bootstrap_engine, 'bootstrap_chain_ladder'):
+            st.error("Bootstrap engine not available.")
+            return
+
+        obs_mask = pd.DataFrame(False, index=range(n_ay), columns=range(n_dev))
+        for i in range(n_ay):
+            for j in range(n_dev):
+                if i + j < n_ay and not np.isnan(C[i, j]):
+                    obs_mask.iloc[i, j] = True
+        if origin_date is None:
+            origin_date = pd.Timestamp('2020-01-01')
+
+        result = bootstrap_engine.bootstrap_chain_ladder(
+            working_cum=triangle, obs_mask=obs_mask, origin=origin_date, grain=grain,
+            n_periods=n_ay, n_iterations=n_iter, add_process_variance=add_pv,
+            use_inflation=use_inflation, per_period_rates=per_period_rates,
+            cum_inflation=cum_inflation, use_discounting=use_discounting,
+            spot_rates=spot_rates, flat_rate=flat_rate, seed=42
+        )
+        cl_ibnr = result['cl_ibnr_nominal']
+        boot_mean = result['bootstrap_mean']
+        pctl = result['percentiles_nominal'].get(int(confidence * 100), boot_mean)
+        ra = max(pctl - boot_mean, 0)
+        arr = result['ibnr_nominal_samples']
+        phi = result.get('phi', 0)
+
+    st.markdown(f"### Bootstrap Results at {confidence:.0%} Confidence")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("CL IBNR", f"{cl_ibnr:,.2f}")
+    with c2: st.metric("Bootstrap Mean", f"{boot_mean:,.2f}")
+    with c3: st.metric(f"P{confidence*100:.0f} Percentile", f"{pctl:,.2f}")
+    with c4: st.metric("Risk Adjustment", f"{ra:,.2f}")
+    st.caption(f"Phi: {phi:.4f} | Iterations: {n_iter:,} | Process Variance: {'Yes' if add_pv else 'No'}")
+    st.markdown("#### IBNR Distribution")
+    counts, bins = np.histogram(arr, bins=30)
+    hist_df = pd.DataFrame({'Bin_Start': bins[:-1], 'Count': counts}).set_index('Bin_Start')
+    st.bar_chart(hist_df)
+    output = BytesIO()
+    pd.DataFrame({'IBNR_Samples': arr}).to_excel(output, index=False)
+    output.seek(0)
+    sc = sanitize_filename(client_name)
+    st.download_button("Download Bootstrap Samples", data=output, file_name=f"{sc}_Bootstrap_Samples.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="bts_dl")
 
 def render_bootstrap_calculator():
     show_breadcrumb()
@@ -1316,6 +1396,7 @@ def render_bootstrap_calculator():
     input_type = st.radio("Input Data Type", ["Claims-Level Data", "Cumulative Triangle"], key="bts_input_type")
     if input_type == "Cumulative Triangle":
         uploaded = st.file_uploader("Upload Cumulative Claims Triangle (CSV/Excel)", type=["csv", "xlsx", "xls"], key="bts_f_tri")
+        st.caption("First column = AY labels, remaining = cumulative claims.")
         if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
         try:
             raw = read_uploaded_triangle(uploaded)
@@ -1332,8 +1413,42 @@ def render_bootstrap_calculator():
                 run_bootstrap_calculation(raw, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain, origin_date=pd.Timestamp('2020-01-01'))
         except Exception as e: st.error(f"Error: {e}")
     else:
-        # ... (claims-level data similar to Mack)
-        pass
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="bts_gr")
+        with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bts_fd")
+        with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bts_td")
+        grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
+        uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="bts_f_cl")
+        if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+        try:
+            df = read_uploaded_file(uploaded)
+            df.columns = df.columns.astype(str).str.strip()
+            st.dataframe(df.head(5), use_container_width=True)
+            cols = df.columns.tolist()
+            c1, c2 = st.columns(2)
+            with c1: loss_col = st.selectbox("Loss Date", cols, key="bts_ld")
+            with c2: rep_col = st.selectbox("Report Date", cols, key="bts_rd")
+            amount_col = st.selectbox("Amount Column", cols, key="bts_amt")
+            df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+            df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
+            df = df.dropna(subset=[loss_col, rep_col])
+            from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+            df = _date_filter(df, loss_col, from_date, to_date)
+            n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
+            if engine_utils is not None:
+                _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
+                st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
+                st.markdown("### Adjustments")
+                c1, c2 = st.columns(2)
+                with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bts_inf_cl")
+                with c2: use_discounting = st.checkbox("Apply Discounting", key="bts_disc_cl")
+                cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
+                if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "bts_cl")
+                if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "bts_cl")
+                if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_cl", use_container_width=True):
+                    run_bootstrap_calculation(cum_triangle, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
+            else: st.error("Engine utils not available.")
+        except Exception as e: st.error(f"Error: {e}")
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
