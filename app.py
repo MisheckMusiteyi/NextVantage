@@ -135,25 +135,25 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', '', name).strip() or "Client"
 
 def show_error(e):
-    """Display a clear, human-readable error. Detects the common pandas
-    failure that occurs when a column expected to hold numbers actually
-    contains text (e.g. malformed numbers, currency symbols, stray words),
-    and rewrites it in plain language. Falls back to the raw message
-    for anything else."""
+    """Display a clear, human-readable error. Detects common pandas
+    failures that occur when a column expected to hold numbers or dates
+    actually contains incompatible text, and rewrites them in plain
+    language. Falls back to the raw message for anything else."""
     msg = str(e)
 
-    # Pattern raised by pandas/pyarrow when a numeric conversion hits a
-    # non-numeric string, e.g.:
+    # Try to find the offending column name if pandas mentions it, e.g.:
+    # "... Conversion failed for column Sum Insured with type category"
+    col_match = re.search(r"column ([^\s]+(?: [A-Za-z]+)?) with type", msg)
+    col_name = col_match.group(1) if col_match else None
+    col_text = f" in the **'{col_name}'** column" if col_name else ""
+
+    # --- Pattern 1: numeric conversion hit a non-numeric string, e.g. ---
     # "Could not convert '14,000,00.00' with type str: tried to convert to double"
-    # optionally followed by "... Conversion failed for column Sum Insured with type category"
     bad_value_match = re.search(r"[Cc]ould not convert '([^']+)' with type str", msg)
-    col_match = re.search(r"column ([^\s]+) with type", msg)
     also_generic_float_match = re.search(r"could not convert string to float: '([^']+)'", msg)
 
     if bad_value_match or also_generic_float_match:
         bad_value = bad_value_match.group(1) if bad_value_match else also_generic_float_match.group(1)
-        col_name = col_match.group(1) if col_match else None
-        col_text = f" in the **'{col_name}'** column" if col_name else ""
         st.error(
             f"**Non-numeric value found{col_text}: '{bad_value}'**\n\n"
             f"A column expected to contain only numbers (e.g. an amount, premium, "
@@ -164,6 +164,36 @@ def show_error(e):
             f"Please open your source file, fix or remove the offending value(s) "
             f"in that column, and re-upload."
         )
+        return
+
+    # --- Pattern 2: a text value couldn't be converted to int/date, e.g. ---
+    # "object of type <class 'str'> cannot be converted to int"
+    # optionally followed by "Conversion failed for column Start Date with type category"
+    type_conversion_match = re.search(r"cannot be converted to (int|float|double)", msg)
+
+    if type_conversion_match:
+        looks_like_date_col = bool(col_name) and re.search(r"date", col_name, re.IGNORECASE)
+        if looks_like_date_col:
+            st.error(
+                f"**Invalid date value found{col_text}**\n\n"
+                f"A column expected to contain only dates has at least one entry "
+                f"that isn't a recognizable date. This commonly happens because of "
+                f"a stray text entry, an inconsistent date format (e.g. mixing "
+                f"'31/12/2025' with 'Dec 2025' or 'TBC'/'N/A'), or a blank cell "
+                f"that was filled with a placeholder.\n\n"
+                f"Please open your source file, fix or remove the offending value(s) "
+                f"in that column, and re-upload."
+            )
+        else:
+            st.error(
+                f"**Invalid value found{col_text}**\n\n"
+                f"A column expected to contain only numbers or dates has at least "
+                f"one value pandas couldn't interpret. This commonly happens "
+                f"because of a stray text entry, an inconsistent format, or a "
+                f"blank cell filled with a placeholder such as 'N/A' or 'TBC'.\n\n"
+                f"Please open your source file, fix or remove the offending value(s) "
+                f"in that column, and re-upload."
+            )
         return
 
     st.error(f"Error: {msg}")
