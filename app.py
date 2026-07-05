@@ -232,6 +232,50 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
         except Exception as e: st.error(f"Inflation data error: {e}")
     return cum_inflation, per_period_rates
 
+def _apply_flexible_date_filter(df, date_col, filter_type, date1=None, date2=None):
+    """Apply a single flexible date condition (On / Before / After / Between / etc.) to a date column.
+    Returns a boolean mask aligned to df.index. Whole-day inclusive on the 'end' side."""
+    if not date_col or filter_type == "No Filter":
+        return pd.Series(True, index=df.index)
+    s = pd.to_datetime(df[date_col], errors='coerce')
+    end_of_day = pd.Timedelta(hours=23, minutes=59, seconds=59)
+    if filter_type == "On":
+        d1 = pd.Timestamp(date1)
+        return (s >= d1) & (s <= d1 + end_of_day)
+    if filter_type == "On or Before":
+        return s <= pd.Timestamp(date1) + end_of_day
+    if filter_type == "On or After":
+        return s >= pd.Timestamp(date1)
+    if filter_type == "Before":
+        return s < pd.Timestamp(date1)
+    if filter_type == "After":
+        return s > pd.Timestamp(date1) + end_of_day
+    if filter_type == "Between":
+        return (s >= pd.Timestamp(date1)) & (s <= pd.Timestamp(date2) + end_of_day)
+    return pd.Series(True, index=df.index)
+
+def _render_single_date_filter_ui(cols, label, key_prefix):
+    """Renders the column-picker + filter-type + date-input(s) for one date column.
+    Returns (date_col, filter_type, date1, date2)."""
+    st.markdown(f"**{label}**")
+    c1, c2 = st.columns(2)
+    with c1:
+        date_col = st.selectbox(f"{label} Column", cols, key=f"{key_prefix}_col")
+    with c2:
+        filter_type = st.selectbox(
+            "Filter Type",
+            ["No Filter", "On", "On or Before", "On or After", "Before", "After", "Between"],
+            key=f"{key_prefix}_type"
+        )
+    date1 = date2 = None
+    if filter_type == "Between":
+        cc1, cc2 = st.columns(2)
+        with cc1: date1 = st.date_input(f"{label} From", date(2020, 1, 1), key=f"{key_prefix}_d1")
+        with cc2: date2 = st.date_input(f"{label} To", date(2025, 12, 31), key=f"{key_prefix}_d2")
+    elif filter_type != "No Filter":
+        date1 = st.date_input(f"{label} Date", date(2025, 1, 1), key=f"{key_prefix}_d1")
+    return date_col, filter_type, date1, date2
+
 def load_discounting_data_ui(grain_code, ppy, page_key):
     st.markdown("**Discounting**")
     disc_method = st.radio("Discounting Method", ["None", "Single Flat Rate", "Yield Curve"], key=f"disc_m_{page_key}", horizontal=True)
@@ -640,6 +684,36 @@ def render_ocr_calculator():
             df.columns = df.columns.astype(str).str.strip()
             st.dataframe(df.head(5), use_container_width=True)
             all_columns = df.columns.tolist()
+
+            st.markdown("### Date Filters")
+            include_date_filters = st.checkbox(
+                "Include Date Filters",
+                value=False,
+                key="ocr_use_date_filters",
+                help="Turn on if your file has a Loss Date and/or Notification Date and you want to restrict "
+                     "the OCR calculation to specific periods on either date. Leave off if your file already "
+                     "represents the outstanding case estimates as at the valuation date (i.e. the raw sum IS the reserve)."
+            )
+            loss_date_col = notif_date_col = None
+            loss_filter_type = notif_filter_type = "No Filter"
+            loss_d1 = loss_d2 = notif_d1 = notif_d2 = None
+            if include_date_filters:
+                st.caption("Filter independently on the Loss Date and/or the Notification (Report) Date. Leave either as 'No Filter' to skip it.")
+                fc1, fc2 = st.columns(2)
+                with fc1:
+                    loss_date_col, loss_filter_type, loss_d1, loss_d2 = _render_single_date_filter_ui(all_columns, "Loss Date", "ocr_lossdt")
+                with fc2:
+                    notif_date_col, notif_filter_type, notif_d1, notif_d2 = _render_single_date_filter_ui(all_columns, "Notification Date", "ocr_notifdt")
+
+                mask = _apply_flexible_date_filter(df, loss_date_col, loss_filter_type, loss_d1, loss_d2)
+                mask &= _apply_flexible_date_filter(df, notif_date_col, notif_filter_type, notif_d1, notif_d2)
+                df = df[mask].copy()
+                st.info(f"{len(df):,} record(s) remain after date filtering.")
+                if df.empty:
+                    st.warning("No records remain after applying the date filters. Adjust the filters above.")
+                    back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
+                    return
+
             grouping_cols = st.multiselect("Group By Columns", options=all_columns, default=[all_columns[0]] if all_columns else [], key="ocr_gc")
             if not grouping_cols: st.info("Please select at least one Group By column."); return
             numeric_columns = [c for c in df.select_dtypes(include=[np.number]).columns if c not in grouping_cols]
