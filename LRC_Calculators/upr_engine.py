@@ -67,7 +67,7 @@ def calculate_upr(
 
     # 4. Calculate Duration and Remaining Days (INCLUSIVE: +1)
     df_work['Duration_Days'] = (df_work['End_Date'] - df_work['Start_Date']).dt.days + 1
-    df_work['Remaining_Days'] = (df_work['End_Date'] - valuation_date).dt.days
+    df_work['Remaining_Days'] = (df_work['End_Date'] - valuation_date).dt.days + 1
 
     # 5. Clamp Remaining_Days to [0, Duration_Days]
     df_work['Remaining_Days'] = np.clip(df_work['Remaining_Days'], 0, df_work['Duration_Days'])
