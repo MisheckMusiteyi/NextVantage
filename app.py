@@ -135,20 +135,12 @@ def sanitize_filename(name):
     return re.sub(r'[\\/*?:"<>|]', '', name).strip() or "Client"
 
 def show_error(e):
-    """Display a clear, human-readable error. Detects common pandas
-    failures that occur when a column expected to hold numbers or dates
-    actually contains incompatible text, and rewrites them in plain
-    language. Falls back to the raw message for anything else."""
+    """Display a clear, human-readable error."""
     msg = str(e)
-
-    # Try to find the offending column name if pandas mentions it, e.g.:
-    # "... Conversion failed for column Sum Insured with type category"
     col_match = re.search(r"column ([^\s]+(?: [A-Za-z]+)?) with type", msg)
     col_name = col_match.group(1) if col_match else None
     col_text = f" in the **'{col_name}'** column" if col_name else ""
 
-    # --- Pattern 1: numeric conversion hit a non-numeric string, e.g. ---
-    # "Could not convert '14,000,00.00' with type str: tried to convert to double"
     bad_value_match = re.search(r"[Cc]ould not convert '([^']+)' with type str", msg)
     also_generic_float_match = re.search(r"could not convert string to float: '([^']+)'", msg)
 
@@ -156,50 +148,24 @@ def show_error(e):
         bad_value = bad_value_match.group(1) if bad_value_match else also_generic_float_match.group(1)
         st.error(
             f"**Non-numeric value found{col_text}: '{bad_value}'**\n\n"
-            f"A column expected to contain only numbers (e.g. an amount, premium, "
-            f"or sum insured) has at least one value that isn't a valid number. "
-            f"This commonly happens because of a stray text entry, a formatting "
-            f"issue such as extra/misplaced commas, a currency symbol, or a "
-            f"leading/trailing space.\n\n"
-            f"Please open your source file, fix or remove the offending value(s) "
-            f"in that column, and re-upload."
+            f"A column expected to contain only numbers has at least one value that isn't a valid number. "
+            f"This commonly happens because of a stray text entry, formatting issue, or currency symbol.\n\n"
+            f"Please fix the offending value(s) and re-upload."
         )
         return
 
-    # --- Pattern 2: a text value couldn't be converted to int/date, e.g. ---
-    # "object of type <class 'str'> cannot be converted to int"
-    # optionally followed by "Conversion failed for column Start Date with type category"
     type_conversion_match = re.search(r"cannot be converted to (int|float|double)", msg)
-
     if type_conversion_match:
         looks_like_date_col = bool(col_name) and re.search(r"date", col_name, re.IGNORECASE)
         if looks_like_date_col:
-            st.error(
-                f"**Invalid date value found{col_text}**\n\n"
-                f"A column expected to contain only dates has at least one entry "
-                f"that isn't a recognizable date. This commonly happens because of "
-                f"a stray text entry, an inconsistent date format (e.g. mixing "
-                f"'31/12/2025' with 'Dec 2025' or 'TBC'/'N/A'), or a blank cell "
-                f"that was filled with a placeholder.\n\n"
-                f"Please open your source file, fix or remove the offending value(s) "
-                f"in that column, and re-upload."
-            )
+            st.error(f"**Invalid date value found{col_text}**\n\nPlease fix or remove the offending value(s) and re-upload.")
         else:
-            st.error(
-                f"**Invalid value found{col_text}**\n\n"
-                f"A column expected to contain only numbers or dates has at least "
-                f"one value pandas couldn't interpret. This commonly happens "
-                f"because of a stray text entry, an inconsistent format, or a "
-                f"blank cell filled with a placeholder such as 'N/A' or 'TBC'.\n\n"
-                f"Please open your source file, fix or remove the offending value(s) "
-                f"in that column, and re-upload."
-            )
+            st.error(f"**Invalid value found{col_text}**\n\nA column expected to contain only numbers or dates has at least one value that couldn't be interpreted.")
         return
 
     st.error(f"Error: {msg}")
 
 def _check_duplicate_columns(df, filename=None):
-    """Raise a clear, actionable error if the uploaded file has duplicate column headers."""
     cols = pd.Series(df.columns.astype(str))
     dupes = cols[cols.duplicated()].unique().tolist()
     if dupes:
@@ -207,8 +173,7 @@ def _check_duplicate_columns(df, filename=None):
         dupe_list = ", ".join(f"'{d}'" for d in dupes)
         raise ValueError(
             f"Duplicate column name(s) found{where}: {dupe_list}. "
-            f"Please rename or remove the repeated column(s) in your source file and re-upload. "
-            f"Duplicate headers can cause incorrect groupings, totals, or selections."
+            f"Please rename or remove the repeated column(s) and re-upload."
         )
 
 def map_columns(df, required_fields, prefix):
@@ -297,8 +262,6 @@ def load_inflation_data_ui(grain_code, ppy, page_key):
     return cum_inflation, per_period_rates
 
 def _apply_flexible_date_filter(df, date_col, filter_type, date1=None, date2=None):
-    """Apply a single flexible date condition (On / Before / After / Between / etc.) to a date column.
-    Returns a boolean mask aligned to df.index. Whole-day inclusive on the 'end' side."""
     if not date_col or filter_type == "No Filter":
         return pd.Series(True, index=df.index)
     s = pd.to_datetime(df[date_col], errors='coerce')
@@ -319,8 +282,6 @@ def _apply_flexible_date_filter(df, date_col, filter_type, date1=None, date2=Non
     return pd.Series(True, index=df.index)
 
 def _render_single_date_filter_ui(cols, label, key_prefix):
-    """Renders the column-picker + filter-type + date-input(s) for one date column.
-    Returns (date_col, filter_type, date1, date2)."""
     st.markdown(f"**{label}**")
     c1, c2 = st.columns(2)
     with c1:
@@ -368,7 +329,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
 
 
 # =============================================================================
-#  STREAMLIT CONFIGURATION (unchanged)
+#  STREAMLIT CONFIGURATION
 # =============================================================================
 st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
@@ -436,7 +397,7 @@ st.markdown("""
 
 
 # =============================================================================
-#  SESSION STATE & NAVIGATION (unchanged)
+#  SESSION STATE & NAVIGATION
 # =============================================================================
 if 'page' not in st.session_state: st.session_state.page = 'home'
 if 'breadcrumb' not in st.session_state: st.session_state.breadcrumb = ['Home']
@@ -459,7 +420,7 @@ def back_button(target_page, target_breadcrumb):
 
 
 # =============================================================================
-#  NAVIGATION PAGES (unchanged)
+#  NAVIGATION PAGES
 # =============================================================================
 def render_home():
     st.markdown('<div class="hero"><h1>Next Vantage</h1><p>Comprehensive Actuarial Reserving Toolkit - IFRS 17 Compliant<br>African Actuarial Consultants</p></div>', unsafe_allow_html=True)
@@ -558,7 +519,7 @@ def render_risk_adjustment():
 #  INDIVIDUAL CALCULATORS
 # =============================================================================
 
-# ---------- UPR (updated with fully earned/unearned fix) ----------
+# ---------- UPR (USES ENGINE) ----------
 def render_upr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>UPR Calculator</h1><p>Unearned Premium Reserve - Pro-rata Methods</p></div>', unsafe_allow_html=True)
@@ -589,72 +550,20 @@ def render_upr_calculator():
             selected_value_cols = st.multiselect("Amount Columns", options=numeric_columns, default=numeric_columns[:min(4, len(numeric_columns))], key="upr_vc")
             if not selected_value_cols: st.info("Please select at least one Amount column."); return
 
-            include_per_policy = st.checkbox("Include per-policy details in export", value=False, key="upr_per_policy")
-
-            df_processed = df.rename(columns={start_date_col: 'Start_Date', end_date_col: 'End_Date'}).copy()
-            df_processed['Start_Date'] = pd.to_datetime(df_processed['Start_Date'], errors='coerce')
-            df_processed['End_Date'] = pd.to_datetime(df_processed['End_Date'], errors='coerce')
-            df_processed = df_processed.dropna(subset=['Start_Date', 'End_Date'])
-            df_processed = df_processed[df_processed['End_Date'] > df_processed['Start_Date']]
-            for c in selected_value_cols: df_processed[c] = pd.to_numeric(df_processed[c], errors='coerce').fillna(0)
-
-            # Duration calculations
-            df_processed["Duration_Days"] = (df_processed["End_Date"] - df_processed["Start_Date"]).dt.days + 1
-            df_processed = df_processed[df_processed["Duration_Days"] > 0]
-            if df_processed.empty: st.error("No valid policies after data validation."); return
-            st.success(f"{len(df_processed):,} valid policies loaded")
-
             if st.button("Calculate UPR", key="upr_calc", use_container_width=True):
+                if upr_engine is None:
+                    st.error("UPR engine not available.")
+                    return
                 with st.spinner("Calculating UPR..."):
-                    # Explicit condition: fully earned / fully unearned
-                    df_processed['Unearned_Portion'] = 0.0
-                    mask_fully_unearned = valuation_date_ts <= df_processed['Start_Date']
-                    mask_fully_earned   = valuation_date_ts >= df_processed['End_Date']
-                    mask_partial        = ~(mask_fully_unearned | mask_fully_earned)
-
-                    df_processed.loc[mask_fully_unearned, 'Unearned_Portion'] = 1.0
-                    df_processed.loc[mask_fully_earned,   'Unearned_Portion'] = 0.0
-
-                    if method == "365th":
-                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
-                            (df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1
-                        ) / df_processed.loc[mask_partial, "Duration_Days"]
-                    elif method == "24th":
-                        interval = 365.25 / 24
-                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
-                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
-                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
-                    else:  # 8th
-                        interval = 365.25 / 8
-                        df_processed.loc[mask_partial, 'Unearned_Portion'] = (
-                            ((df_processed.loc[mask_partial, "End_Date"] - valuation_date_ts).dt.days + 1) / interval
-                        ) / (df_processed.loc[mask_partial, "Duration_Days"] / interval)
-
-                    for c in selected_value_cols:
-                        df_processed[f"{c}_UPR"] = df_processed['Unearned_Portion'] * df_processed[c]
-
-                    upr_columns = [f"{c}_UPR" for c in selected_value_cols]
-                    # Aggregated result
-                    result = df_processed.groupby(grouping_cols)[upr_columns].sum().reset_index()
-                    result.columns = grouping_cols + selected_value_cols
-
-                    per_policy_df = None
-                    if include_per_policy:
-                        per_policy_df = df_processed[[start_date_col, end_date_col] + grouping_cols +
-                                                      ['Duration_Days']].copy()
-                        per_policy_df['Unearned_Duration'] = (
-                            df_processed['Unearned_Portion'] * df_processed['Duration_Days']
-                        ).round(0).astype(int)
-                        per_policy_df['Earned_Duration'] = (
-                            per_policy_df['Duration_Days'] - per_policy_df['Unearned_Duration']
-                        )
-                        for c in selected_value_cols:
-                            per_policy_df[f"{c}_UPR"] = df_processed[f"{c}_UPR"]
-                        per_policy_df = per_policy_df.rename(columns={
-                            start_date_col: 'Start_Date',
-                            end_date_col: 'End_Date',
-                            'Duration_Days': 'Policy_Duration'
-                        })
+                    result = upr_engine.calculate_upr(
+                        df=df,
+                        start_date_col=start_date_col,
+                        end_date_col=end_date_col,
+                        value_cols=selected_value_cols,
+                        grouping_cols=grouping_cols,
+                        valuation_date=valuation_date_ts,
+                        method=method
+                    )
 
                 st.markdown("### UPR Results")
                 disp = result.copy()
@@ -666,8 +575,6 @@ def render_upr_calculator():
                 output = BytesIO()
                 with pd.ExcelWriter(output, engine='openpyxl') as w:
                     result.to_excel(w, index=False, sheet_name='UPR_Summary')
-                    if include_per_policy and per_policy_df is not None:
-                        per_policy_df.to_excel(w, index=False, sheet_name='UPR_Per_Policy')
                 output.seek(0)
                 sc = sanitize_filename(client_name); so = sanitize_filename(base_filename)
                 st.download_button("Download UPR Results", data=output, file_name=f"{sc}_{so}_UPR_{method}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="upr_dl")
@@ -675,7 +582,7 @@ def render_upr_calculator():
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
-# ---------- Loss Component (unchanged) ----------
+# ---------- Loss Component (uses engine) ----------
 def render_loss_component():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Loss Component Calculator</h1><p>Onerous Contract Identification - IFRS 17 PAA</p></div>', unsafe_allow_html=True)
@@ -733,7 +640,7 @@ def render_loss_component():
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
-# ---------- OCR (unchanged) ----------
+# ---------- OCR (USES ENGINE - returns 3-tuple) ----------
 def render_ocr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>OCR Calculator</h1><p>Outstanding Claims Reserve - Group & Sum</p></div>', unsafe_allow_html=True)
@@ -755,14 +662,13 @@ def render_ocr_calculator():
                 value=False,
                 key="ocr_use_date_filters",
                 help="Turn on if your file has a Loss Date and/or Notification Date and you want to restrict "
-                     "the OCR calculation to specific periods on either date. Leave off if your file already "
-                     "represents the outstanding case estimates as at the valuation date (i.e. the raw sum IS the reserve)."
+                     "the OCR calculation to specific periods on either date."
             )
             loss_date_col = notif_date_col = None
             loss_filter_type = notif_filter_type = "No Filter"
             loss_d1 = loss_d2 = notif_d1 = notif_d2 = None
             if include_date_filters:
-                st.caption("Filter independently on the Loss Date and/or the Notification (Report) Date. Leave either as 'No Filter' to skip it.")
+                st.caption("Filter independently on the Loss Date and/or the Notification (Report) Date.")
                 fc1, fc2 = st.columns(2)
                 with fc1:
                     loss_date_col, loss_filter_type, loss_d1, loss_d2 = _render_single_date_filter_ui(all_columns, "Loss Date", "ocr_lossdt")
@@ -774,7 +680,7 @@ def render_ocr_calculator():
                 df = df[mask].copy()
                 st.info(f"{len(df):,} record(s) remain after date filtering.")
                 if df.empty:
-                    st.warning("No records remain after applying the date filters. Adjust the filters above.")
+                    st.warning("No records remain after applying the date filters.")
                     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
                     return
 
@@ -783,25 +689,42 @@ def render_ocr_calculator():
             numeric_columns = [c for c in df.select_dtypes(include=[np.number]).columns if c not in grouping_cols]
             selected_value_cols = st.multiselect("Amount Columns", options=numeric_columns, default=numeric_columns[:min(5, len(numeric_columns))], key="ocr_vc")
             if not selected_value_cols: st.info("Please select at least one Amount column."); return
-            df_processed = df[grouping_cols + selected_value_cols].copy()
-            for c in selected_value_cols: df_processed[c] = pd.to_numeric(df_processed[c], errors='coerce').fillna(0)
-            grouped = df_processed.groupby(grouping_cols)[selected_value_cols].sum().reset_index()
-            st.markdown("### OCR Summary")
-            disp = grouped.copy()
-            for c in selected_value_cols: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
-            st.dataframe(disp, use_container_width=True, hide_index=True)
-            total_ocr = sum(grouped[c].sum() for c in selected_value_cols)
-            st.metric("Total OCR", f"{total_ocr:,.2f}")
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w: grouped.to_excel(w, index=False, sheet_name='OCR_Results')
-            output.seek(0)
-            sc = sanitize_filename(client_name); so = sanitize_filename(base_filename)
-            st.download_button("Download OCR Results", data=output, file_name=f"{sc}_{so}_OCR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ocr_dl")
+
+            if st.button("Calculate OCR", key="ocr_calc", use_container_width=True):
+                if ocr_engine is None:
+                    st.error("OCR engine not available.")
+                    return
+                with st.spinner("Calculating OCR..."):
+                    grouped, cleaning_report, grand_total = ocr_engine.calculate_ocr(
+                        df=df,
+                        grouping_cols=grouping_cols,
+                        value_cols=selected_value_cols,
+                        clean_data=True
+                    )
+
+                st.markdown("### OCR Summary")
+                if cleaning_report.get('duplicates_removed', 0) > 0:
+                    st.info(f"Cleaning: {cleaning_report['duplicates_removed']} duplicate rows removed.")
+                if cleaning_report.get('conversion_issues'):
+                    for issue in cleaning_report['conversion_issues']:
+                        st.warning(f"Column '{issue['column']}': {issue['failed_count']} non-numeric values converted to 0.")
+
+                disp = grouped.copy()
+                for c in selected_value_cols:
+                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}" if isinstance(x, (int, float)) else x)
+                st.dataframe(disp, use_container_width=True, hide_index=True)
+                st.metric("Grand Total OCR", f"{grand_total:,.2f}")
+
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as w: grouped.to_excel(w, index=False, sheet_name='OCR_Results')
+                output.seek(0)
+                sc = sanitize_filename(client_name); so = sanitize_filename(base_filename)
+                st.download_button("Download OCR Results", data=output, file_name=f"{sc}_{so}_OCR.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ocr_dl")
         except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- Percentage IBNR (unchanged) ----------
+# ---------- Percentage IBNR (uses engine) ----------
 def render_percentage_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Percentage IBNR Calculator</h1><p>Simple Method: IBNR = Amount x IBNR Percentage</p></div>', unsafe_allow_html=True)
@@ -854,7 +777,7 @@ def render_percentage_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- BCL (enhanced with export per LOB) ----------
+# ---------- BCL (uses engine) ----------
 def render_bcl_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) - IBNR</h1><p>Multi-LDF Methods with Inflation & Discounting Support</p></div>', unsafe_allow_html=True)
@@ -951,7 +874,6 @@ def render_bcl_calculator():
             total_ibnr = summary['IBNR'].sum() if 'IBNR' in summary.columns else 0
             st.metric("Total BCL IBNR", f"{total_ibnr:,.2f}")
 
-            # Build export with detailed sheets per LOB
             export_sheets = {'BCL_Summary': summary, 'BCL_Detail': final_df}
             for lob in lobs:
                 if lob in inc_triangles:
@@ -975,7 +897,7 @@ def render_bcl_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- Cape Cod (enhanced with export per LOB, per-LOB premium mapping) ----------
+# ---------- Cape Cod (uses engine, premium structure options, fixed labels + warnings) ----------
 def render_capecod_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Cape Cod - IBNR</h1><p>Uses premiums to derive expected loss ratio</p></div>', unsafe_allow_html=True)
@@ -984,14 +906,30 @@ def render_capecod_calculator():
     with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="cc_fd")
     with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="cc_td")
     claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="cc_cf")
-    prem_file = st.file_uploader("Premiums Data (Dev_Period + LOB columns)", type=["csv", "xlsx", "xls"], key="cc_pf")
-    if claims_file is None or prem_file is None: st.info("Upload both claims and premiums files."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
+    
+    premium_structure = st.radio(
+        "Premium Data Structure",
+        ["Per LOB Column (wide format)", "Per Row (Accident Year, LOB, Premium)"],
+        key="cc_prem_structure",
+        help="'Per LOB Column': One column per LOB with accident years as rows.\n"
+             "'Per Row': Each row has Accident Year, LOB, and Premium amount."
+    )
+    
+    prem_file = st.file_uploader("Premiums Data", type=["csv", "xlsx", "xls"], key="cc_pf")
+    if claims_file is None or prem_file is None: 
+        st.info("Upload both claims and premiums files.")
+        back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
+        return
+    
     try:
         df = read_uploaded_file(claims_file)
         df.columns = df.columns.astype(str).str.strip()
         prem_df = read_uploaded_file(prem_file)
         prem_df.columns = prem_df.columns.astype(str).str.strip()
-        st.dataframe(df.head(3), use_container_width=True); st.dataframe(prem_df.head(3), use_container_width=True)
+        
+        st.dataframe(df.head(3), use_container_width=True)
+        st.dataframe(prem_df.head(3), use_container_width=True)
+        
         cols = df.columns.tolist()
         c1, c2, c3 = st.columns(3)
         with c1: loss_col = st.selectbox("Loss Date", cols, key="cc_ld")
@@ -999,30 +937,78 @@ def render_capecod_calculator():
         with c3: lob_col = st.selectbox("LOB", cols, key="cc_lob")
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="cc_amt")
-        if not amount_cols: st.warning("Please select at least one Amount column."); return
+        if not amount_cols: 
+            st.warning("Please select at least one Amount column.")
+            return
 
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
+        df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
         for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
-        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        from_dt = pd.Timestamp(str(from_date))
+        to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
         lobs = sorted(df[lob_col].dropna().unique())
+        grain = "Y"
+        ppy = 1
+        n_periods = to_dt.year - from_dt.year + 1
 
         p_cols = prem_df.columns.tolist()
-        prem_period_col = st.selectbox("Development Period Column", p_cols, key="cc_prem_period")
-        avail_cols = [c for c in p_cols if c != prem_period_col]
-        if len(avail_cols) < len(lobs):
-            st.error(f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).")
-            return
         lob_mapping = {}
-        st.markdown("**Map each Line of Business to a premium column:**")
-        for lob in lobs:
-            options = ["None"] + avail_cols
-            default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
-            idx = options.index(default) if default in options else 0
-            lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"cc_map_{lob}")
+        
+        if premium_structure == "Per LOB Column (wide format)":
+            prem_period_col = st.selectbox(
+                "Accident Year Column (e.g. 2020, 2021, ...)", 
+                p_cols, 
+                key="cc_prem_period",
+                help="Column containing the calendar year for each row. Values must be years matching the triangle's accident period range."
+            )
+            avail_cols = [c for c in p_cols if c != prem_period_col]
+            if len(avail_cols) < len(lobs):
+                st.error(
+                    f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).\n\n"
+                    f"Your claims data has LOBs: {', '.join(lobs)}\n"
+                    f"Your premium file has these potential LOB columns: {', '.join(avail_cols)}\n\n"
+                    f"Options:\n"
+                    f"1. Switch to 'Per Row' format (Accident Year, LOB, Premium)\n"
+                    f"2. Add the missing LOB columns to your premium file\n"
+                    f"3. Remove claims for LOBs not in the premium file"
+                )
+                return
+            st.markdown("**Map each Line of Business to a premium column:**")
+            for lob in lobs:
+                options = ["None"] + avail_cols
+                default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
+                idx = options.index(default) if default in options else 0
+                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"cc_map_{lob}")
+        else:
+            st.markdown("**Map premium data columns:**")
+            c1, c2, c3 = st.columns(3)
+            with c1: 
+                prem_period_col = st.selectbox(
+                    "Accident Year Column (e.g. 2020, 2021, ...)", 
+                    p_cols, 
+                    key="cc_prem_ay",
+                    help="Column containing the calendar year for each row."
+                )
+            with c2:
+                prem_lob_col = st.selectbox("LOB Column", p_cols, key="cc_prem_lob")
+            with c3:
+                prem_amount_col = st.selectbox("Premium Amount Column", p_cols, key="cc_prem_amount")
+            
+            prem_lobs = set(prem_df[prem_lob_col].astype(str).str.strip().unique())
+            missing_lobs = set(lobs) - prem_lobs
+            if missing_lobs:
+                st.error(
+                    f"Some LOBs from claims data are missing in the premium data: {', '.join(missing_lobs)}\n\n"
+                    f"Claims LOBs: {', '.join(lobs)}\n"
+                    f"Premium LOBs: {', '.join(sorted(prem_lobs))}\n\n"
+                    f"Please ensure all LOBs have corresponding premium data."
+                )
+                return
+            
+            lob_mapping = {lob: 'ROW_BASED' for lob in lobs}
 
-        grain = "Y"; ppy = 1; n_periods = to_dt.year - from_dt.year + 1
         st.markdown("### LDF Method Selection")
         selected_method = "volume_weighted"
         if engine_utils is not None and ibnr_cc is not None and hasattr(ibnr_cc, 'calculate_all_ldfs'):
@@ -1031,12 +1017,16 @@ def render_capecod_calculator():
             all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n_periods)
             ldf_df = pd.DataFrame({
                 "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
-                "Vol-Weighted": all_ldfs["volume_weighted"], "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"], "Medial": all_ldfs["medial"],
-                "Lin Regression": all_ldfs["linear_regression"], "Wtd Last 3": all_ldfs["weighted_last_3"]
+                "Vol-Weighted": all_ldfs["volume_weighted"],
+                "Simple Avg": all_ldfs["simple_average"],
+                "Geometric": all_ldfs["geometric"],
+                "Medial": all_ldfs["medial"],
+                "Lin Regression": all_ldfs["linear_regression"],
+                "Wtd Last 3": all_ldfs["weighted_last_3"]
             })
             st.dataframe(ldf_df.round(4), use_container_width=True)
-            rec_method = "volume_weighted"; min_cv = float('inf')
+            rec_method = "volume_weighted"
+            min_cv = float('inf')
             for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
                 factors = all_ldfs[method]
                 if len(factors) >= 3:
@@ -1049,6 +1039,7 @@ def render_capecod_calculator():
                 index=["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"].index(rec_method),
                 key="cc_ldf_method"
             )
+        
         st.markdown("### Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
@@ -1056,26 +1047,53 @@ def render_capecod_calculator():
         cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
         if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "cc")
         if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "cc")
+        
         if st.button("Calculate Cape Cod IBNR", key="cc_run", use_container_width=True):
-            if ibnr_cc is None or engine_utils is None: st.error("Required engines not available."); return
+            if ibnr_cc is None or engine_utils is None: 
+                st.error("Required engines not available.")
+                return
             with st.spinner("Calculating Cape Cod IBNR..."):
                 all_results = []
                 inc_triangles = {}
                 ldfs_per_lob = {}
+                
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-                    prems = [1.0] * n_periods
-                    prem_col = lob_mapping.get(lob, "None")
-                    if prem_col != "None":
-                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
+                    
+                    if premium_structure == "Per Row (Accident Year, LOB, Premium)":
+                        lob_prem = prem_df[prem_df[prem_lob_col].astype(str).str.strip() == lob].copy()
                         lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
+                        lob_prem[prem_amount_col] = pd.to_numeric(lob_prem[prem_amount_col], errors='coerce').fillna(0)
                         lob_prem = lob_prem.dropna(subset=[prem_period_col])
                         lob_prem = lob_prem.sort_values(prem_period_col)
-                        if len(lob_prem) != n_periods:
-                            st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
-                            return
-                        prems = lob_prem[prem_col].tolist()
+                        
+                        prems = [0.0] * n_periods
+                        for _, row in lob_prem.iterrows():
+                            period_idx = int(row[prem_period_col]) - from_dt.year
+                            if 0 <= period_idx < n_periods:
+                                prems[period_idx] = row[prem_amount_col]
+                        if sum(prems) == 0:
+                            st.warning(f"No premium data mapped for LOB '{lob}'. Using default premium of 1.0 per period. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
+                            prems = [1.0] * n_periods
+                    else:
+                        prem_col = lob_mapping.get(lob, "None")
+                        if prem_col != "None":
+                            lob_prem = prem_df[[prem_period_col, prem_col]].copy()
+                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                            lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
+                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                            lob_prem = lob_prem.sort_values(prem_period_col)
+                            prems = [0.0] * n_periods
+                            for _, row in lob_prem.iterrows():
+                                period_idx = int(row[prem_period_col]) - from_dt.year
+                                if 0 <= period_idx < n_periods:
+                                    prems[period_idx] = row[prem_col]
+                            if sum(prems) == 0:
+                                st.warning(f"No premium data mapped for LOB '{lob}'. Using default premium of 1.0 per period. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
+                                prems = [1.0] * n_periods
+                        else:
+                            prems = [1.0] * n_periods
+                    
                     for idx, ac in enumerate(amount_cols):
                         inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         if idx == 0:
@@ -1094,16 +1112,21 @@ def render_capecod_calculator():
                             )
                         if idx == 0:
                             ldfs_per_lob[lob] = result.get('dev_factors', [])
-                        res_df = result['results_df']; res_df['LOB'] = lob; res_df['Amount_Col'] = ac
+                        res_df = result['results_df']
+                        res_df['LOB'] = lob
+                        res_df['Amount_Col'] = ac
                         all_results.append(res_df)
+                
                 final_df = pd.concat(all_results, ignore_index=True)
                 ibnr_col = next((c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 'Cape_Cod_IBNR')
                 current_col = next((c for c in final_df.columns if 'Current' in c), 'Current_Claims')
                 summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
+            
             st.markdown("### Cape Cod IBNR Summary")
             disp = summary.copy()
             for c in [current_col, ibnr_col]:
-                if c in disp.columns: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+                if c in disp.columns: 
+                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
@@ -1131,7 +1154,7 @@ def render_capecod_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- BF (enhanced with export per LOB, per-LOB premium mapping) ----------
+# ---------- BF (uses engine, premium structure options, fixed labels + warnings, clear optionality) ----------
 def render_bf_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson - IBNR</h1><p>Multi-LDF Methods with Expected Loss Ratio</p></div>', unsafe_allow_html=True)
@@ -1140,8 +1163,31 @@ def render_bf_calculator():
     with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bf_fd")
     with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bf_td")
     claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="bf_cf")
-    prem_file = st.file_uploader("Premiums Data (Dev_Period + LOB columns) - Optional", type=["csv", "xlsx", "xls"], key="bf_pf")
-    if claims_file is None: st.info("Upload claims data file."); back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
+    
+    if claims_file is None: 
+        st.info("Upload claims data file.")
+        back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
+        return
+    
+    with st.expander("ℹ️ Why are premiums optional?", expanded=False):
+        st.markdown("""
+        **Premiums are optional for the Bornhuetter-Ferguson method because:**
+        
+        1. **With premiums**: The method scales expected ultimate losses proportionally to actual premium volume per accident year.
+        
+        2. **Without premiums**: The method uses equal weights (1.0) for all accident years. This is appropriate when:
+           - You only know the expected loss ratio (ELR) but not detailed premium history
+           - Premium volume is relatively stable across years
+           - You're working with aggregated data
+        """)
+    
+    premium_structure = st.radio(
+        "Premium Data (Optional)",
+        ["No premiums - use ELR only", "Upload premium file"],
+        key="bf_use_premiums",
+        help="Select whether to use explicit premium data or rely solely on Expected Loss Ratios."
+    )
+    
     try:
         df = read_uploaded_file(claims_file)
         df.columns = df.columns.astype(str).str.strip()
@@ -1153,38 +1199,88 @@ def render_bf_calculator():
         with c3: lob_col = st.selectbox("LOB", cols, key="bf_lob")
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
         amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="bf_amt")
-        if not amount_cols: st.warning("Please select at least one Amount column."); return
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+        if not amount_cols: 
+            st.warning("Please select at least one Amount column.")
+            return
+        
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
+        df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
         for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
         df = df.dropna(subset=[loss_col, rep_col])
-        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        from_dt = pd.Timestamp(str(from_date))
+        to_dt = pd.Timestamp(str(to_date))
         df = _date_filter(df, loss_col, from_date, to_date)
         lobs = sorted(df[lob_col].dropna().unique())
+        grain = "Y"
+        ppy = 1
+        n_periods = to_dt.year - from_dt.year + 1
 
-        prem_df = None; prem_period_col = None; lob_mapping = {}
-        if prem_file is not None:
-            prem_df = read_uploaded_file(prem_file)
-            prem_df.columns = prem_df.columns.astype(str).str.strip()
-            st.dataframe(prem_df.head(3), use_container_width=True)
-            p_cols = prem_df.columns.tolist()
-            prem_period_col = st.selectbox("Development Period Column", p_cols, key="bf_prem_period")
-            avail_cols = [c for c in p_cols if c != prem_period_col]
-            if len(avail_cols) < len(lobs):
-                st.error(f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).")
-                return
-            st.markdown("**Map each Line of Business to a premium column:**")
-            for lob in lobs:
-                options = ["None"] + avail_cols
-                default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
-                idx = options.index(default) if default in options else 0
-                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"bf_map_{lob}")
+        prem_df = None
+        prem_period_col = None
+        prem_lob_col = None
+        prem_amount_col = None
+        lob_mapping = {}
+        
+        if premium_structure == "Upload premium file":
+            prem_file = st.file_uploader("Premiums Data", type=["csv", "xlsx", "xls"], key="bf_pf")
+            if prem_file is not None:
+                prem_df = read_uploaded_file(prem_file)
+                prem_df.columns = prem_df.columns.astype(str).str.strip()
+                st.dataframe(prem_df.head(3), use_container_width=True)
+                
+                prem_format = st.radio(
+                    "Premium Data Structure",
+                    ["Per LOB Column (wide format)", "Per Row (Accident Year, LOB, Premium)"],
+                    key="bf_prem_structure"
+                )
+                
+                p_cols = prem_df.columns.tolist()
+                if prem_format == "Per LOB Column (wide format)":
+                    prem_period_col = st.selectbox(
+                        "Accident Year Column (e.g. 2020, 2021, ...)", 
+                        p_cols, 
+                        key="bf_prem_period",
+                        help="Column containing the calendar year for each row."
+                    )
+                    avail_cols = [c for c in p_cols if c != prem_period_col]
+                    if len(avail_cols) < len(lobs):
+                        st.error(
+                            f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).\n\n"
+                            f"Claims LOBs: {', '.join(lobs)}\n"
+                            f"Available premium columns: {', '.join(avail_cols)}\n\n"
+                            f"Try switching to 'Per Row' format or add missing LOB columns."
+                        )
+                        return
+                    st.markdown("**Map each Line of Business to a premium column:**")
+                    for lob in lobs:
+                        options = ["None"] + avail_cols
+                        default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), "None")
+                        idx = options.index(default) if default in options else 0
+                        lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"bf_map_{lob}")
+                else:
+                    c1, c2, c3 = st.columns(3)
+                    with c1: prem_period_col = st.selectbox(
+                        "Accident Year Column (e.g. 2020, 2021, ...)", 
+                        p_cols, 
+                        key="bf_prem_ay",
+                        help="Column containing the calendar year for each row."
+                    )
+                    with c2: prem_lob_col = st.selectbox("LOB Column", p_cols, key="bf_prem_lob")
+                    with c3: prem_amount_col = st.selectbox("Premium Amount Column", p_cols, key="bf_prem_amount")
+                    prem_lobs = set(prem_df[prem_lob_col].astype(str).str.strip().unique())
+                    missing_lobs = set(lobs) - prem_lobs
+                    if missing_lobs:
+                        st.warning(f"LOBs missing from premium data: {', '.join(missing_lobs)}. These will use default premium of 1.0.")
+                    lob_mapping = {lob: 'ROW_BASED' for lob in lobs}
 
         st.markdown("### Expected Loss Ratios (ELR) per LOB")
+        st.caption("ELR is the expected ultimate loss ratio (losses / premium). E.g., 70% means you expect 70 cents of loss per $1 of premium.")
         elr_cols = st.columns(min(len(lobs), 4))
         elr_dict = {}
         for i, lob in enumerate(lobs):
-            with elr_cols[i % 4]: elr_dict[lob] = st.number_input(f"ELR {lob} (%)", 0.0, 200.0, 70.0, 1.0, key=f"bf_elr_{lob}") / 100.0
-        grain = "Y"; ppy = 1; n_periods = to_dt.year - from_dt.year + 1
+            with elr_cols[i % 4]: 
+                elr_dict[lob] = st.number_input(f"ELR {lob} (%)", 0.0, 200.0, 70.0, 1.0, key=f"bf_elr_{lob}") / 100.0
+        
         st.markdown("### LDF Method Selection")
         selected_method = "volume_weighted"
         if engine_utils is not None and ibnr_bf is not None and hasattr(ibnr_bf, 'calculate_all_ldfs'):
@@ -1193,12 +1289,16 @@ def render_bf_calculator():
             all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n_periods)
             ldf_df = pd.DataFrame({
                 "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
-                "Vol-Weighted": all_ldfs["volume_weighted"], "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"], "Medial": all_ldfs["medial"],
-                "Lin Regression": all_ldfs["linear_regression"], "Wtd Last 3": all_ldfs["weighted_last_3"]
+                "Vol-Weighted": all_ldfs["volume_weighted"],
+                "Simple Avg": all_ldfs["simple_average"],
+                "Geometric": all_ldfs["geometric"],
+                "Medial": all_ldfs["medial"],
+                "Lin Regression": all_ldfs["linear_regression"],
+                "Wtd Last 3": all_ldfs["weighted_last_3"]
             })
             st.dataframe(ldf_df.round(4), use_container_width=True)
-            rec_method = "volume_weighted"; min_cv = float('inf')
+            rec_method = "volume_weighted"
+            min_cv = float('inf')
             for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
                 factors = all_ldfs[method]
                 if len(factors) >= 3:
@@ -1211,6 +1311,7 @@ def render_bf_calculator():
                 index=["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"].index(rec_method),
                 key="bf_ldf_method"
             )
+        
         st.markdown("### Adjustments")
         c1, c2 = st.columns(2)
         with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
@@ -1218,26 +1319,53 @@ def render_bf_calculator():
         cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
         if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "bf")
         if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "bf")
+        
         if st.button("Calculate BF IBNR", key="bf_run", use_container_width=True):
-            if ibnr_bf is None or engine_utils is None: st.error("Required engines not available."); return
+            if ibnr_bf is None or engine_utils is None: 
+                st.error("Required engines not available.")
+                return
             with st.spinner("Calculating BF IBNR..."):
                 all_results = []
                 inc_triangles = {}
                 ldfs_per_lob = {}
+                
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
+                    
                     prems = [1.0] * n_periods
-                    prem_col = lob_mapping.get(lob, "None") if prem_file is not None else "None"
-                    if prem_col != "None":
-                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
-                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
-                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                        lob_prem = lob_prem.sort_values(prem_period_col)
-                        if len(lob_prem) != n_periods:
-                            st.error(f"Number of premium periods for LOB '{lob}' ({len(lob_prem)}) does not match the number of accident periods ({n_periods}).")
-                            return
-                        prems = lob_prem[prem_col].tolist()
+                    
+                    if premium_structure == "Upload premium file" and prem_df is not None:
+                        if prem_lob_col is not None:
+                            lob_prem = prem_df[prem_df[prem_lob_col].astype(str).str.strip() == lob].copy()
+                            lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                            lob_prem[prem_amount_col] = pd.to_numeric(lob_prem[prem_amount_col], errors='coerce').fillna(0)
+                            lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                            lob_prem = lob_prem.sort_values(prem_period_col)
+                            prems = [0.0] * n_periods
+                            for _, row in lob_prem.iterrows():
+                                period_idx = int(row[prem_period_col]) - from_dt.year
+                                if 0 <= period_idx < n_periods:
+                                    prems[period_idx] = row[prem_amount_col]
+                            if sum(prems) == 0:
+                                st.warning(f"No premium data mapped for LOB '{lob}'. Using default premium of 1.0 per period. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
+                                prems = [1.0] * n_periods
+                        else:
+                            prem_col = lob_mapping.get(lob, "None")
+                            if prem_col != "None":
+                                lob_prem = prem_df[[prem_period_col, prem_col]].copy()
+                                lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
+                                lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
+                                lob_prem = lob_prem.dropna(subset=[prem_period_col])
+                                lob_prem = lob_prem.sort_values(prem_period_col)
+                                prems = [0.0] * n_periods
+                                for _, row in lob_prem.iterrows():
+                                    period_idx = int(row[prem_period_col]) - from_dt.year
+                                    if 0 <= period_idx < n_periods:
+                                        prems[period_idx] = row[prem_col]
+                                if sum(prems) == 0:
+                                    st.warning(f"No premium data mapped for LOB '{lob}'. Using default premium of 1.0 per period. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
+                                    prems = [1.0] * n_periods
+                    
                     for idx, ac in enumerate(amount_cols):
                         inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
                         if idx == 0:
@@ -1258,16 +1386,21 @@ def render_bf_calculator():
                             )
                         if idx == 0:
                             ldfs_per_lob[lob] = result.get('dev_factors', [])
-                        res_df = result['results_df']; res_df['LOB'] = lob; res_df['Amount_Col'] = ac
+                        res_df = result['results_df']
+                        res_df['LOB'] = lob
+                        res_df['Amount_Col'] = ac
                         all_results.append(res_df)
+                
                 final_df = pd.concat(all_results, ignore_index=True)
                 ibnr_col = next((c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 'BF_IBNR')
                 current_col = next((c for c in final_df.columns if 'Current' in c), 'Current_Claims')
                 summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
+            
             st.markdown("### BF IBNR Summary")
             disp = summary.copy()
             for c in [current_col, ibnr_col]:
-                if c in disp.columns: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+                if c in disp.columns: 
+                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
             st.dataframe(disp, use_container_width=True, hide_index=True)
             total_ibnr = summary[ibnr_col].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
@@ -1295,7 +1428,7 @@ def render_bf_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- ULAE (unchanged) ----------
+# ---------- ULAE (USES ENGINE - per-portfolio and aggregated) ----------
 def render_ulae_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>ULAE Calculator</h1><p>Unallocated Loss Adjustment Expenses</p></div>', unsafe_allow_html=True)
@@ -1314,17 +1447,58 @@ def render_ulae_calculator():
         with c1: lob_col = st.selectbox("LOB Column", cols, key="ulae_lob")
         with c2: ocr_col = st.selectbox("OCR Column", cols, key="ulae_ocr")
         with c3: ibnr_col = st.selectbox("IBNR Column", cols, key="ulae_ibnr")
+
+        if basis == "Aggregated":
+            st.markdown("**Apportionment Data**")
+            app_file = st.file_uploader("Upload Apportionment File (Portfolio, Apportionment_Pct)", type=["csv", "xlsx", "xls"], key="ulae_app")
+            apportionment_df = None
+            if app_file is not None:
+                apportionment_df = read_uploaded_file(app_file)
+                apportionment_df.columns = apportionment_df.columns.astype(str).str.strip()
+
         if st.button("Calculate ULAE", key="ulae_run", use_container_width=True):
-            df[ocr_col] = pd.to_numeric(df[ocr_col], errors='coerce').fillna(0)
-            df[ibnr_col] = pd.to_numeric(df[ibnr_col], errors='coerce').fillna(0)
-            df['ULAE_Base'] = 0.5 * df[ocr_col] + df[ibnr_col]
-            df['ULAE'] = df['ULAE_Base'] * ulae_ratio
-            res = df[[lob_col, ocr_col, ibnr_col, 'ULAE_Base', 'ULAE']].copy()
+            if ulae_engine is None:
+                st.error("ULAE engine not available.")
+                return
+            with st.spinner("Calculating ULAE..."):
+                df_renamed = df.rename(columns={
+                    lob_col: 'Portfolio',
+                    ocr_col: 'OCR',
+                    ibnr_col: 'IBNR'
+                })
+
+                if basis == "Per Portfolio":
+                    portfolios = df_renamed['Portfolio'].unique()
+                    ulae_ratios_dict = {p: ulae_ratio for p in portfolios}
+
+                    res = ulae_engine.calculate_ulae_per_portfolio(
+                        df_reserves=df_renamed[['Portfolio', 'OCR', 'IBNR']],
+                        ulae_ratios=ulae_ratios_dict,
+                        is_detailed=True
+                    )
+                    total_ulae = res['ULAE'].sum()
+
+                else:
+                    if apportionment_df is None:
+                        st.error("Please upload an apportionment file for aggregated calculation.")
+                        return
+
+                    res, total_ulae_base = ulae_engine.calculate_ulae_aggregated(
+                        df_reserves=df_renamed[['Portfolio', 'OCR', 'IBNR']],
+                        ulae_ratio=ulae_ratio,
+                        apportionment_df=apportionment_df,
+                        is_detailed=True
+                    )
+                    total_ulae = res['ULAE'].sum()
+
             st.markdown("### ULAE Results")
             disp = res.copy()
-            for c in [ocr_col, ibnr_col, 'ULAE_Base', 'ULAE']: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            for c in disp.columns:
+                if c != 'Portfolio' and pd.api.types.is_numeric_dtype(disp[c]):
+                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
             st.dataframe(disp, use_container_width=True, hide_index=True)
-            st.metric("Total ULAE", f"{df['ULAE'].sum():,.2f}")
+            st.metric("Total ULAE", f"{total_ulae:,.2f}")
+
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as w: res.to_excel(w, index=False, sheet_name='ULAE_Results')
             output.seek(0); sc = sanitize_filename(client_name)
@@ -1333,44 +1507,95 @@ def render_ulae_calculator():
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- NPR (unchanged) ----------
+# ---------- NPR (USES ENGINE - aggregation and per-portfolio) ----------
 def render_npr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>NPR Calculator</h1><p>Reinsurance Non-Performance Risk - IFRS 17 Para 63(e)</p></div>', unsafe_allow_html=True)
     client_name = st.text_input("Client Name", value="Client", key="npr_cn").strip()
+
     st.markdown("#### Reinsurer Data (Name, Credit Rating, PD, Share)")
     ri_file = st.file_uploader("Upload Reinsurer File", type=["csv", "xlsx", "xls"], key="npr_rf")
     st.markdown("#### Ceded LIC Data (Portfolio, Ceded IBNR, Ceded OCR)")
     lic_file = st.file_uploader("Upload Ceded LIC File", type=["csv", "xlsx", "xls"], key="npr_lf")
-    if ri_file is None or lic_file is None: st.info("Upload both Reinsurer and Ceded LIC files."); back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
+
+    if ri_file is None or lic_file is None:
+        st.info("Upload both Reinsurer and Ceded LIC files.")
+        back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
+        return
+
     try:
         ri_df = read_uploaded_file(ri_file); ri_df.columns = ri_df.columns.astype(str).str.strip()
         lic_df = read_uploaded_file(lic_file); lic_df.columns = lic_df.columns.astype(str).str.strip()
         c1, c2 = st.columns(2)
         with c1: st.caption("Reinsurer Data"); st.dataframe(ri_df.head(3), use_container_width=True)
         with c2: st.caption("Ceded LIC Data"); st.dataframe(lic_df.head(3), use_container_width=True)
+
         rc = ri_df.columns.tolist(); lc = lic_df.columns.tolist()
+
+        npr_basis = st.radio(
+            "NPR Calculation Basis",
+            ["Aggregation (single share per RI)", "Per Portfolio (separate share per portfolio)"],
+            key="npr_basis",
+            help="Aggregation: one overall share per reinsurer. Per Portfolio: separate share columns per portfolio."
+        )
+
         c1, c2, c3 = st.columns(3)
         with c1: name_col = st.selectbox("Reinsurer Name", rc, key="npr_rn")
         with c2: pd_col = st.selectbox("PD Column", rc, key="npr_pd")
-        with c3: share_col = st.selectbox("Share Column", rc, key="npr_sh")
+
+        if npr_basis == "Aggregation (single share per RI)":
+            with c3: share_col = st.selectbox("Overall Share Column", rc, key="npr_sh")
+        else:
+            with c3: share_col = st.selectbox("Share Column (base name)", rc, key="npr_sh",
+                                               help="The reinsurer file should have one share column per portfolio (e.g., 'Motor_Share', 'Fire_Share')")
+
         c1, c2 = st.columns(2)
         with c1: port_col = st.selectbox("Portfolio Column", lc, key="npr_pc")
         with c2: ibnr_col = st.selectbox("Ceded IBNR Column", lc, key="npr_ibnr")
         ocr_col = st.selectbox("Ceded OCR Column", lc, key="npr_ocr")
+
         if st.button("Calculate NPR", key="npr_run", use_container_width=True):
-            ri_df[pd_col] = pd.to_numeric(ri_df[pd_col], errors='coerce').fillna(0)
-            ri_df[share_col] = pd.to_numeric(ri_df[share_col], errors='coerce').fillna(0)
-            lic_df[ibnr_col] = pd.to_numeric(lic_df[ibnr_col], errors='coerce').fillna(0)
-            lic_df[ocr_col] = pd.to_numeric(lic_df[ocr_col], errors='coerce').fillna(0)
-            lic_df['Total_LIC'] = lic_df[ibnr_col] + lic_df[ocr_col]
-            ri_small = ri_df[[name_col, pd_col, share_col]].rename(columns={name_col:'Reinsurer', pd_col:'PD', share_col:'Share'})
-            lic_small = lic_df[[port_col, 'Total_LIC']].rename(columns={port_col:'Portfolio'})
-            res = ri_small.merge(lic_small, how='cross')
-            res['NPR'] = res['PD'] * res['Share'] * res['Total_LIC']
-            res = res[['Reinsurer', 'Portfolio', 'PD', 'Share', 'Total_LIC', 'NPR']]
-            by_port = res.groupby('Portfolio', observed=True)['NPR'].sum().reset_index()
-            by_ri = res.groupby('Reinsurer', observed=True)['NPR'].sum().reset_index()
+            if npr_engine is None:
+                st.error("NPR engine not available.")
+                return
+            with st.spinner("Calculating NPR..."):
+                lic_renamed = lic_df.rename(columns={
+                    port_col: 'Portfolio',
+                    ibnr_col: 'Ceded_IBNR',
+                    ocr_col: 'Ceded_OCR'
+                })
+                lic_renamed['Ceded_IBNR'] = pd.to_numeric(lic_renamed['Ceded_IBNR'], errors='coerce').fillna(0)
+                lic_renamed['Ceded_OCR'] = pd.to_numeric(lic_renamed['Ceded_OCR'], errors='coerce').fillna(0)
+                lic_renamed['Total_Ceded_LIC'] = lic_renamed['Ceded_IBNR'] + lic_renamed['Ceded_OCR']
+
+                if npr_basis == "Aggregation (single share per RI)":
+                    ri_renamed = ri_df.rename(columns={
+                        name_col: 'Reinsurer_Name',
+                        pd_col: 'PD',
+                        share_col: 'Overall_Share'
+                    })
+                    ri_renamed['PD'] = pd.to_numeric(ri_renamed['PD'], errors='coerce').fillna(0)
+                    ri_renamed['Overall_Share'] = pd.to_numeric(ri_renamed['Overall_Share'], errors='coerce').fillna(0)
+
+                    res, by_port, by_ri, total_npr = npr_engine.calculate_npr_aggregation(
+                        df_ri=ri_renamed,
+                        df_lic=lic_renamed[['Portfolio', 'Ceded_IBNR', 'Ceded_OCR', 'Total_Ceded_LIC']]
+                    )
+                else:
+                    ri_renamed = ri_df.rename(columns={
+                        name_col: 'Reinsurer_Name',
+                        pd_col: 'PD'
+                    })
+                    ri_renamed['PD'] = pd.to_numeric(ri_renamed['PD'], errors='coerce').fillna(0)
+
+                    portfolios = lic_renamed['Portfolio'].unique().tolist()
+
+                    res, by_port, by_ri, total_npr = npr_engine.calculate_npr_per_portfolio(
+                        df_ri=ri_renamed,
+                        df_lic=lic_renamed[['Portfolio', 'Ceded_IBNR', 'Ceded_OCR', 'Total_Ceded_LIC']],
+                        portfolios=portfolios
+                    )
+
             st.markdown("### NPR Results")
             c1, c2 = st.columns(2)
             with c1:
@@ -1379,7 +1604,8 @@ def render_npr_calculator():
             with c2:
                 disp2 = by_ri.copy(); disp2['NPR'] = disp2['NPR'].apply(lambda x: f"{x:,.2f}")
                 st.dataframe(disp2, use_container_width=True, hide_index=True)
-            st.metric("Total NPR", f"{res['NPR'].sum():,.2f}")
+            st.metric("Total NPR", f"{total_npr:,.2f}")
+
             output, ext, mime = build_download_payload({'NPR_by_Portfolio': by_port, 'NPR_by_Reinsurer': by_ri, 'NPR_Detail': res})
             sc = sanitize_filename(client_name)
             st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR.{ext}", mime=mime, key="npr_dl")
@@ -1387,7 +1613,7 @@ def render_npr_calculator():
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- Mack RA (updated: claims-level input only) ----------
+# ---------- Mack RA (uses engine) ----------
 def run_mack_calculation(triangle, confidence, z_score, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
     with st.spinner("Calculating Mack Chain Ladder..."):
         n_ay, n_dev = triangle.shape
@@ -1469,7 +1695,7 @@ def render_mack_calculator():
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
-# ---------- Bootstrap RA (updated: claims-level input only) ----------
+# ---------- Bootstrap RA (uses engine) ----------
 def run_bootstrap_calculation(triangle, confidence, n_iter, add_pv, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
     with st.spinner(f"Running {n_iter:,} bootstrap iterations..."):
         n_ay, n_dev = triangle.shape
@@ -1566,7 +1792,7 @@ def render_bootstrap_calculator():
 
 
 # =============================================================================
-#  FULL VALUATION (IFRS 17 Engine only) – unchanged
+#  FULL VALUATION (IFRS 17 Engine only)
 # =============================================================================
 def render_full_valuation():
     show_breadcrumb()
@@ -1577,7 +1803,6 @@ def render_full_valuation():
         back_button('home', ['Home'])
         return
     
-    # --- Report Metadata ---
     st.markdown("### Report Metadata")
     with st.container():
         st.markdown('<div class="report-meta">', unsafe_allow_html=True)
@@ -1627,7 +1852,6 @@ def render_full_valuation():
         else:
             claims_curve_file = None
     
-    # Discounting data – only when toggled on
     yield_curve_df = None
     if discount_toggle == "Apply Discounting":
         st.markdown("#### Discounting Data (Yield Curve)")
@@ -1642,7 +1866,6 @@ def render_full_valuation():
             except Exception as e:
                 show_error(e)
     
-    # Loss Component – always via engine
     st.markdown("#### Loss Component (computed via engine)")
     lc_data_file = st.file_uploader(
         "Upload Loss Component Input Data (LOB, Written Premium, Expenses, Commission, Paid Claims, Opening/Closing OCR, IBNR, UPR, RA)",
@@ -1720,7 +1943,6 @@ def render_full_valuation():
             pol_map = map_columns(policy_df, ['Group','Start_Date','End_Date','Written_Premium'], 'fv_pol')
             policy_df = policy_df.rename(columns={v:k for k,v in pol_map.items()})
             
-            # Build loss_comp_df from computed result + expected future premiums
             if not lc_computed and 'lc_computed' not in st.session_state:
                 st.warning("Please compute the Loss Component first.")
                 return
@@ -1735,13 +1957,11 @@ def render_full_valuation():
             efp_map = map_columns(efp_df, ['Group','Expected_Future_Premiums'], 'fv_efp')
             efp_df = efp_df.rename(columns={v:k for k,v in efp_map.items()})
             
-            # Merge with lc_res (which used lob_col as key)
             lc_res = lc_res.rename(columns={lob_col: 'Group'})
             lc_res = lc_res[['Group','Loss_Ratio','Commission_Ratio','Expense_Ratio','Risk_Adjustment_Ratio']]
             lc_res = lc_res.rename(columns={'Risk_Adjustment_Ratio':'RA_Ratio'})
             loss_comp_df = lc_res.merge(efp_df, on='Group')
             
-            # Claims curve (optional)
             claims_curve_df = None
             if claims_curve_file is not None:
                 cc_df = read_uploaded_file(claims_curve_file)
