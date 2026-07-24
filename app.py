@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # =============================================================================
-#  NEXT VANTAGE — COMPREHENSIVE ACTUARIAL TOOLKIT
+#  AFRICAN ACTUARIAL CONSULTANTS — COMPREHENSIVE ACTUARIAL TOOLKIT
 #  Main App with Multi-Page Navigation
-#  Run:  streamlit run app.py
+#  Run: streamlit run app.py
 # =============================================================================
 
 import streamlit as st
@@ -416,7 +416,7 @@ def back_button(target_page, target_breadcrumb):
 #  NAVIGATION PAGES
 # =============================================================================
 def render_home():
-    st.markdown('<div class="hero"><h1>Next Vantage</h1><p>Comprehensive Actuarial Reserving Toolkit - IFRS 17 Compliant<br></p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>African Actuarial Consultants</h1><p>Comprehensive Actuarial Reserving Toolkit - IFRS 17 Compliant<br></p></div>', unsafe_allow_html=True)
     st.markdown("### Select a Module")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -432,7 +432,7 @@ def render_home():
         st.markdown('<div class="card"><h3>LIC Calculators</h3><p>IBNR - OCR - ULAE - NPR - Risk Adjustment</p></div>', unsafe_allow_html=True)
         if st.button("Open LIC Calculators", key="nav_home_lic", use_container_width=True):
             navigate_to('lic', ['Home', 'LIC Calculators'])
-    st.markdown('<div class="footer">2025 Next Vantage. All rights reserved.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">2026 African Actuarial Consultants. All rights reserved.</div>', unsafe_allow_html=True)
 
 def render_lrc():
     show_breadcrumb()
@@ -491,7 +491,7 @@ def render_ibnr_menu():
                     available = module is not None
                     st.markdown(f'<div class="card"><h3>{name}</h3><p>{"Available" if available else "Unavailable"}</p></div>', unsafe_allow_html=True)
                     if st.button(f"Open {name}", key=f"nav_ibnr_{page}", disabled=not available, use_container_width=True):
-                        navigate_to(page, ['Home', 'LIC', 'Fulfilment Cashflows', 'IBNR Methods', name])
+                        navigate_to(page, ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods', name])
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 def render_risk_adjustment():
@@ -504,15 +504,15 @@ def render_risk_adjustment():
             available = module is not None
             st.markdown(f'<div class="card"><h3>{name}</h3><p>{"Available" if available else "Unavailable"}</p></div>', unsafe_allow_html=True)
             if st.button(f"Open {name}", key=f"nav_ra_{page}", disabled=not available, use_container_width=True):
-                navigate_to(page, ['Home', 'LIC', 'Risk Adjustment', name])
-    back_button('lic', ['Home', 'LIC'])
+                navigate_to(page, ['Home', 'LIC Calculators', 'Risk Adjustment', name])
+    back_button('lic', ['Home', 'LIC Calculators'])
 
 
 # =============================================================================
 #  INDIVIDUAL CALCULATORS
 # =============================================================================
 
-# ---------- UPR (USES ENGINE) ----------
+# ---------- UPR ----------
 def render_upr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>UPR Calculator</h1><p>Unearned Premium Reserve - Pro-rata Methods</p></div>', unsafe_allow_html=True)
@@ -575,7 +575,7 @@ def render_upr_calculator():
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
-# ---------- Loss Component (uses engine) ----------
+# ---------- Loss Component ----------
 def render_loss_component():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Loss Component Calculator</h1><p>Onerous Contract Identification - IFRS 17 PAA</p></div>', unsafe_allow_html=True)
@@ -633,7 +633,7 @@ def render_loss_component():
     back_button('lrc', ['Home', 'LRC Calculators'])
 
 
-# ---------- OCR (USES ENGINE - returns 3-tuple) ----------
+# ---------- OCR ----------
 def render_ocr_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>OCR Calculator</h1><p>Outstanding Claims Reserve - Group & Sum</p></div>', unsafe_allow_html=True)
@@ -717,7 +717,7 @@ def render_ocr_calculator():
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- Percentage IBNR (uses engine) ----------
+# ---------- Percentage IBNR ----------
 def render_percentage_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Percentage IBNR Calculator</h1><p>Simple Method: IBNR = Amount x IBNR Percentage</p></div>', unsafe_allow_html=True)
@@ -770,7 +770,7 @@ def render_percentage_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- BCL (uses engine - added hasattr guard) ----------
+# ---------- BCL ----------
 def render_bcl_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Basic Chain Ladder (BCL) - IBNR</h1><p>Multi-LDF Methods with Inflation & Discounting Support</p></div>', unsafe_allow_html=True)
@@ -890,7 +890,7 @@ def render_bcl_calculator():
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- Cape Cod (FIXED: case-insensitive LOB matching in Per Row + strict "None" handling) ----------
+# ---------- Cape Cod ----------
 def render_capecod_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>Cape Cod - IBNR</h1><p>Uses premiums to derive expected loss ratio</p></div>', unsafe_allow_html=True)
@@ -899,7 +899,7 @@ def render_capecod_calculator():
     with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="cc_fd")
     with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="cc_td")
     claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="cc_cf")
-    
+
     premium_structure = st.radio(
         "Premium Data Structure",
         ["Per LOB Column (wide format)", "Per Row (Accident Year, LOB, Premium)"],
@@ -907,266 +907,8 @@ def render_capecod_calculator():
         help="'Per LOB Column': One column per LOB with accident years as rows.\n"
              "'Per Row': Each row has Accident Year, LOB, and Premium amount."
     )
-    
+
     prem_file = st.file_uploader("Premiums Data", type=["csv", "xlsx", "xls"], key="cc_pf")
-    if claims_file is None or prem_file is None: 
-        st.info("Upload both claims and premiums files.")
-        back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
-        return
-    
-    try:
-        df = read_uploaded_file(claims_file)
-        df.columns = df.columns.astype(str).str.strip()
-        prem_df = read_uploaded_file(prem_file)
-        prem_df.columns = prem_df.columns.astype(str).str.strip()
-        
-        st.dataframe(df.head(3), use_container_width=True)
-        st.dataframe(prem_df.head(3), use_container_width=True)
-        
-        cols = df.columns.tolist()
-        c1, c2, c3 = st.columns(3)
-        with c1: loss_col = st.selectbox("Loss Date", cols, key="cc_ld")
-        with c2: rep_col = st.selectbox("Report Date", cols, key="cc_rd")
-        with c3: lob_col = st.selectbox("LOB", cols, key="cc_lob")
-        amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
-        amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="cc_amt")
-        if not amount_cols: 
-            st.warning("Please select at least one Amount column.")
-            return
-
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
-        df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
-        for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
-        df = df.dropna(subset=[loss_col, rep_col])
-        from_dt = pd.Timestamp(str(from_date))
-        to_dt = pd.Timestamp(str(to_date))
-        df = _date_filter(df, loss_col, from_date, to_date)
-        lobs = sorted(df[lob_col].dropna().unique())
-        grain = "Y"
-        ppy = 1
-        # n_periods uses full-year count even if from_date isn't Jan 1st (intentional: Cape Cod is yearly-grain)
-        n_periods = to_dt.year - from_dt.year + 1
-
-        p_cols = prem_df.columns.tolist()
-        lob_mapping = {}
-        
-        if premium_structure == "Per LOB Column (wide format)":
-            prem_period_col = st.selectbox(
-                "Accident Year Column (e.g. 2020, 2021, ...)", 
-                p_cols, 
-                key="cc_prem_period",
-                help="Column containing the calendar year for each row. Values must be years matching the triangle's accident period range."
-            )
-            avail_cols = [c for c in p_cols if c != prem_period_col]
-            if len(avail_cols) < len(lobs):
-                st.error(
-                    f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).\n\n"
-                    f"Your claims data has LOBs: {', '.join(lobs)}\n"
-                    f"Your premium file has these potential LOB columns: {', '.join(avail_cols)}\n\n"
-                    f"Options:\n"
-                    f"1. Switch to 'Per Row' format (Accident Year, LOB, Premium)\n"
-                    f"2. Add the missing LOB columns to your premium file\n"
-                    f"3. Remove claims for LOBs not in the premium file"
-                )
-                return
-            st.markdown("**Map each Line of Business to a premium column:**")
-            for lob in lobs:
-                options = avail_cols  # REMOVED "None" option - premiums are compulsory
-                default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), avail_cols[0])
-                idx = options.index(default)
-                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"cc_map_{lob}")
-        else:
-            st.markdown("**Map premium data columns:**")
-            c1, c2, c3 = st.columns(3)
-            with c1: 
-                prem_period_col = st.selectbox(
-                    "Accident Year Column (e.g. 2020, 2021, ...)", 
-                    p_cols, 
-                    key="cc_prem_ay",
-                    help="Column containing the calendar year for each row."
-                )
-            with c2:
-                prem_lob_col = st.selectbox("LOB Column", p_cols, key="cc_prem_lob")
-            with c3:
-                prem_amount_col = st.selectbox("Premium Amount Column", p_cols, key="cc_prem_amount")
-            
-            # FIXED: Case-insensitive LOB matching
-            prem_lobs_lower = set(prem_df[prem_lob_col].astype(str).str.strip().str.lower().unique())
-            lobs_lower = [lob.lower() for lob in lobs]
-            missing_lobs = [lob for lob, lob_low in zip(lobs, lobs_lower) if lob_low not in prem_lobs_lower]
-            if missing_lobs:
-                st.error(
-                    f"Some LOBs from claims data are missing in the premium data: {', '.join(missing_lobs)}\n\n"
-                    f"Claims LOBs: {', '.join(lobs)}\n"
-                    f"Premium LOBs: {', '.join(sorted(prem_df[prem_lob_col].astype(str).str.strip().unique()))}\n\n"
-                    f"Please ensure all LOBs have corresponding premium data."
-                )
-                return
-            
-            lob_mapping = {lob: 'ROW_BASED' for lob in lobs}
-
-        st.markdown("### LDF Method Selection")
-        selected_method = "volume_weighted"
-        if engine_utils is not None and ibnr_cc is not None and hasattr(ibnr_cc, 'calculate_all_ldfs'):
-            sample_amt = amount_cols[0]
-            _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n_periods)
-            all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n_periods)
-            ldf_df = pd.DataFrame({
-                "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
-                "Vol-Weighted": all_ldfs["volume_weighted"],
-                "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"],
-                "Medial": all_ldfs["medial"],
-                "Lin Regression": all_ldfs["linear_regression"],
-                "Wtd Last 3": all_ldfs["weighted_last_3"]
-            })
-            st.dataframe(ldf_df.round(4), use_container_width=True)
-            rec_method = "volume_weighted"
-            min_cv = float('inf')
-            for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
-                factors = all_ldfs[method]
-                if len(factors) >= 3:
-                    cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
-                    if cv < min_cv: min_cv = cv; rec_method = method
-            st.info(f"Recommended: {rec_method.replace('_', ' ').title()}")
-            selected_method = st.selectbox(
-                "Select LDF Method to Use",
-                ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
-                index=["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"].index(rec_method),
-                key="cc_ldf_method"
-            )
-        
-        st.markdown("### Adjustments")
-        c1, c2 = st.columns(2)
-        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="cc_inf")
-        with c2: use_discounting = st.checkbox("Apply Discounting", key="cc_disc")
-        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-        if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "cc")
-        if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "cc")
-        
-        if st.button("Calculate Cape Cod IBNR", key="cc_run", use_container_width=True):
-            if ibnr_cc is None or engine_utils is None: 
-                st.error("Required engines not available.")
-                return
-            with st.spinner("Calculating Cape Cod IBNR..."):
-                all_results = []
-                inc_triangles = {}
-                ldfs_per_lob = {}
-                
-                for lob in lobs:
-                    lob_data = df[df[lob_col] == lob].copy()
-                    
-                    if premium_structure == "Per Row (Accident Year, LOB, Premium)":
-                        # FIXED: Case-insensitive matching
-                        lob_prem = prem_df[prem_df[prem_lob_col].astype(str).str.strip().str.lower() == lob.lower()].copy()
-                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_amount_col] = pd.to_numeric(lob_prem[prem_amount_col], errors='coerce').fillna(0)
-                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                        lob_prem = lob_prem.sort_values(prem_period_col)
-                        
-                        prems = [0.0] * n_periods
-                        for _, row in lob_prem.iterrows():
-                            period_idx = int(row[prem_period_col]) - from_dt.year
-                            if 0 <= period_idx < n_periods:
-                                prems[period_idx] = row[prem_amount_col]
-                        if sum(prems) == 0:
-                            st.error(f"No premium data mapped for LOB '{lob}'. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
-                            return
-                    else:
-                        prem_col = lob_mapping.get(lob)
-                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
-                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
-                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                        lob_prem = lob_prem.sort_values(prem_period_col)
-                        prems = [0.0] * n_periods
-                        for _, row in lob_prem.iterrows():
-                            period_idx = int(row[prem_period_col]) - from_dt.year
-                            if 0 <= period_idx < n_periods:
-                                prems[period_idx] = row[prem_col]
-                        if sum(prems) == 0:
-                            st.error(f"No premium data mapped for LOB '{lob}'. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
-                            return
-                    
-                    for idx, ac in enumerate(amount_cols):
-                        inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
-                        if idx == 0:
-                            inc_triangles[lob] = inc.copy()
-                        try:
-                            result = ibnr_cc.calculate_cape_cod_ibnr(
-                                cum_triangle=cum, premiums=prems, start_date=from_dt,
-                                period_unit=grain, selected_ldf_method=selected_method,
-                                use_inflation=use_inflation, cum_inflation=cum_inflation,
-                                per_period_rates=per_period_rates, use_discounting=use_discounting,
-                                spot_rates=spot_rates, flat_rate=flat_rate
-                            )
-                        except TypeError:
-                            result = ibnr_cc.calculate_cape_cod_ibnr(
-                                cum_triangle=cum, premiums=prems, start_date=from_dt, period_unit=grain
-                            )
-                        if idx == 0:
-                            ldfs_per_lob[lob] = result.get('dev_factors', [])
-                        res_df = result['results_df']
-                        res_df['LOB'] = lob
-                        res_df['Amount_Col'] = ac
-                        all_results.append(res_df)
-                
-                final_df = pd.concat(all_results, ignore_index=True)
-                ibnr_col = next((c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 'Cape_Cod_IBNR')
-                current_col = next((c for c in final_df.columns if 'Current' in c), 'Current_Claims')
-                summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
-            
-            st.markdown("### Cape Cod IBNR Summary")
-            disp = summary.copy()
-            for c in [current_col, ibnr_col]:
-                if c in disp.columns: 
-                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
-            st.dataframe(disp, use_container_width=True, hide_index=True)
-            total_ibnr = summary[ibnr_col].sum()
-            st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
-
-            export_sheets = {'CapeCod_Summary': summary, 'CapeCod_Detail': final_df}
-            for lob in lobs:
-                if lob in inc_triangles:
-                    tri = inc_triangles[lob].copy()
-                    tri.columns = [f"Dev_{c}" for c in tri.columns]
-                    tri.index = [f"AY_{i}" for i in tri.index]
-                    export_sheets[f"Incremental_{lob}"] = tri.reset_index()
-                if lob in ldfs_per_lob and ldfs_per_lob[lob]:
-                    ldf_df = pd.DataFrame({
-                        'Dev_Period': [f"{i}-{i+1}" for i in range(len(ldfs_per_lob[lob]))],
-                        'Factor': ldfs_per_lob[lob]
-                    })
-                    export_sheets[f"LDFs_{lob}"] = ldf_df
-                lob_final = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
-                if not lob_final.empty:
-                    export_sheets[f"Ultimate_{lob}"] = lob_final[['Accident_Period_Label', current_col, ibnr_col]]
-            output, ext, mime = build_download_payload(export_sheets)
-            sc = sanitize_filename(client_name)
-            st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
-    except Exception as e: show_error(e)
-    back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
-
-
-# ---------- BF (FIXED: case-insensitive LOB matching in Per Row + strict "None" handling) ----------
-def render_bf_calculator():
-    show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson - IBNR</h1><p>Multi-LDF Methods with Expected Loss Ratio</p></div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1: client_name = st.text_input("Client Name", value="Client", key="bf_cn").strip()
-    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bf_fd")
-    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bf_td")
-    claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="bf_cf")
-
-    premium_structure = st.radio(
-        "Premium Data Structure",
-        ["Per LOB Column (wide format)", "Per Row (Accident Year, LOB, Premium)"],
-        key="bf_prem_structure",
-        help="'Per LOB Column': One column per LOB with accident years as rows.\n"
-             "'Per Row': Each row has Accident Year, LOB, and Premium amount."
-    )
-
-    prem_file = st.file_uploader("Premiums Data", type=["csv", "xlsx", "xls"], key="bf_pf")
     if claims_file is None or prem_file is None:
         st.info("Upload both claims and premiums files.")
         back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
@@ -1178,16 +920,16 @@ def render_bf_calculator():
         prem_df = read_uploaded_file(prem_file)
         prem_df.columns = prem_df.columns.astype(str).str.strip()
 
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(3), use_container_width=True)
         st.dataframe(prem_df.head(3), use_container_width=True)
 
         cols = df.columns.tolist()
         c1, c2, c3 = st.columns(3)
-        with c1: loss_col = st.selectbox("Loss Date", cols, key="bf_ld")
-        with c2: rep_col = st.selectbox("Report Date", cols, key="bf_rd")
-        with c3: lob_col = st.selectbox("LOB", cols, key="bf_lob")
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="cc_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="cc_rd")
+        with c3: lob_col = st.selectbox("LOB", cols, key="cc_lob")
         amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
-        amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="bf_amt")
+        amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="cc_amt")
         if not amount_cols:
             st.warning("Please select at least one Amount column.")
             return
@@ -1206,15 +948,12 @@ def render_bf_calculator():
 
         p_cols = prem_df.columns.tolist()
         lob_mapping = {}
-        prem_period_col = None
-        prem_lob_col = None
-        prem_amount_col = None
 
         if premium_structure == "Per LOB Column (wide format)":
             prem_period_col = st.selectbox(
                 "Accident Year Column (e.g. 2020, 2021, ...)",
                 p_cols,
-                key="bf_prem_period",
+                key="cc_prem_period",
                 help="Column containing the calendar year for each row. Values must be years matching the triangle's accident period range."
             )
             avail_cols = [c for c in p_cols if c != prem_period_col]
@@ -1222,56 +961,156 @@ def render_bf_calculator():
                 st.error(
                     f"Number of premium LOB columns ({len(avail_cols)}) is less than the number of unique LOBs in claims ({len(lobs)}).\n\n"
                     f"Your claims data has LOBs: {', '.join(lobs)}\n"
-                    f"Your premium file has these potential LOB columns: {', '.join(avail_cols)}\n\n"
-                    f"Options:\n"
-                    f"1. Switch to 'Per Row' format (Accident Year, LOB, Premium)\n"
-                    f"2. Add the missing LOB columns to your premium file\n"
-                    f"3. Remove claims for LOBs not in the premium file"
+                    f"Your premium file has these potential LOB columns: {', '.join(avail_cols)}"
                 )
                 return
             st.markdown("**Map each Line of Business to a premium column:**")
             for lob in lobs:
-                options = avail_cols  # REMOVED "None" option
+                options = avail_cols
                 default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), avail_cols[0])
                 idx = options.index(default)
-                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"bf_map_{lob}")
+                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", options, index=idx, key=f"cc_map_{lob}")
         else:
             st.markdown("**Map premium data columns:**")
             c1, c2, c3 = st.columns(3)
             with c1:
                 prem_period_col = st.selectbox(
-                    "Accident Year Column (e.g. 2020, 2021, ...)",
+                    "Accident Year Column",
                     p_cols,
-                    key="bf_prem_ay",
-                    help="Column containing the calendar year for each row."
+                    key="cc_prem_ay"
                 )
             with c2:
-                prem_lob_col = st.selectbox("LOB Column", p_cols, key="bf_prem_lob")
+                prem_lob_col = st.selectbox("LOB Column", p_cols, key="cc_prem_lob")
             with c3:
-                prem_amount_col = st.selectbox("Premium Amount Column", p_cols, key="bf_prem_amount")
+                prem_val_col = st.selectbox("Premium Amount Column", [c for c in p_cols if c not in [prem_period_col, prem_lob_col]], key="cc_prem_val")
 
-            # FIXED: Case-insensitive LOB matching
-            prem_lobs_lower = set(prem_df[prem_lob_col].astype(str).str.strip().str.lower().unique())
-            lobs_lower = [lob.lower() for lob in lobs]
-            missing_lobs = [lob for lob, lob_low in zip(lobs, lobs_lower) if lob_low not in prem_lobs_lower]
-            if missing_lobs:
-                st.error(
-                    f"Some LOBs from claims data are missing in the premium data: {', '.join(missing_lobs)}\n\n"
-                    f"Claims LOBs: {', '.join(lobs)}\n"
-                    f"Premium LOBs: {', '.join(sorted(prem_df[prem_lob_col].astype(str).str.strip().unique()))}\n\n"
-                    f"Please ensure all LOBs have corresponding premium data."
-                )
-                return
+        st.markdown("### LDF Method Selection")
+        selected_method = "volume_weighted"
+        if engine_utils is not None and ibnr_cc is not None and hasattr(ibnr_cc, 'calculate_all_ldfs'):
+            sample_amt = amount_cols[0]
+            _, sample_cum, _ = engine_utils.build_triangles(df, loss_col, rep_col, sample_amt, from_dt, grain, n_periods)
+            all_ldfs = ibnr_cc.calculate_all_ldfs(sample_cum, n_periods)
+            ldf_df = pd.DataFrame({
+                "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
+                "Vol-Weighted": all_ldfs["volume_weighted"], "Simple Avg": all_ldfs["simple_average"],
+                "Geometric": all_ldfs["geometric"], "Medial": all_ldfs["medial"],
+                "Lin Regression": all_ldfs["linear_regression"], "Wtd Last 3": all_ldfs["weighted_last_3"]
+            })
+            st.dataframe(ldf_df.round(4), use_container_width=True)
+            selected_method = st.selectbox(
+                "Select LDF Method",
+                ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
+                key="cc_ldf_m"
+            )
 
-            lob_mapping = {lob: 'ROW_BASED' for lob in lobs}
+        if st.button("Calculate Cape Cod IBNR", key="cc_run", use_container_width=True):
+            if ibnr_cc is None or engine_utils is None: st.error("Required engines not available."); return
+            with st.spinner("Calculating Cape Cod IBNR..."):
+                all_results = []
+                for lob in lobs:
+                    lob_data = df[df[lob_col] == lob].copy()
+                    if premium_structure == "Per LOB Column (wide format)":
+                        mapped_col = lob_mapping[lob]
+                        prem_series = prem_df.set_index(prem_period_col)[mapped_col].to_dict()
+                    else:
+                        sub_p = prem_df[prem_df[prem_lob_col].astype(str).str.strip().str.lower() == str(lob).strip().lower()]
+                        prem_series = sub_p.set_index(prem_period_col)[prem_val_col].to_dict()
+
+                    expected_years = [from_dt.year + i for i in range(n_periods)]
+                    premiums_arr = np.array([float(prem_series.get(y, 0.0) or 0.0) for y in expected_years])
+
+                    for ac in amount_cols:
+                        inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
+                        res = ibnr_cc.calculate_cape_cod_ibnr(
+                            cum_triangle=cum, premiums=premiums_arr, start_date=from_dt, period_unit=grain,
+                            selected_ldf_method=selected_method
+                        )
+                        rdf = res['results_df']; rdf['LOB'] = lob; rdf['Amount_Col'] = ac
+                        all_results.append(rdf)
+                final_df = pd.concat(all_results, ignore_index=True)
+                summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'IBNR']].sum().reset_index()
+
+            st.markdown("### Cape Cod IBNR Summary")
+            disp = summary.copy()
+            for c in ['Current_Claims', 'IBNR']: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            st.dataframe(disp, use_container_width=True, hide_index=True)
+            total_ibnr = summary['IBNR'].sum()
+            st.metric("Total Cape Cod IBNR", f"{total_ibnr:,.2f}")
+
+            output, ext, mime = build_download_payload({'CC_Summary': summary, 'CC_Detail': final_df})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download Cape Cod Results", data=output, file_name=f"{sc}_CapeCod_IBNR.{ext}", mime=mime, key="cc_dl")
+    except Exception as e: show_error(e)
+    back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
+
+
+# ---------- BF ----------
+def render_bf_calculator():
+    show_breadcrumb()
+    st.markdown('<div class="hero"><h1>Bornhuetter-Ferguson (BF) - IBNR</h1><p>Combines initial expected loss ratios with chain ladder development</p></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1: client_name = st.text_input("Client Name", value="Client", key="bf_cn").strip()
+    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bf_fd")
+    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bf_td")
+    claims_file = st.file_uploader("Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="bf_cf")
+
+    premium_structure = st.radio(
+        "Premium Data Structure",
+        ["Per LOB Column (wide format)", "Per Row (Accident Year, LOB, Premium)"],
+        key="bf_prem_structure"
+    )
+    prem_file = st.file_uploader("Premiums Data", type=["csv", "xlsx", "xls"], key="bf_pf")
+    if claims_file is None or prem_file is None:
+        st.info("Upload both claims and premiums files.")
+        back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods']); return
+
+    try:
+        df = read_uploaded_file(claims_file)
+        df.columns = df.columns.astype(str).str.strip()
+        prem_df = read_uploaded_file(prem_file)
+        prem_df.columns = prem_df.columns.astype(str).str.strip()
+
+        st.dataframe(df.head(3), use_container_width=True)
+        cols = df.columns.tolist()
+        c1, c2, c3 = st.columns(3)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="bf_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="bf_rd")
+        with c3: lob_col = st.selectbox("LOB", cols, key="bf_lob")
+        amount_candidates = [c for c in cols if c not in [loss_col, rep_col, lob_col] and pd.api.types.is_numeric_dtype(df[c])]
+        amount_cols = st.multiselect("Amount Column(s)", amount_candidates, key="bf_amt")
+        if not amount_cols: st.warning("Please select at least one Amount column."); return
+
+        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce')
+        df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
+        for ac in amount_cols: df[ac] = pd.to_numeric(df[ac], errors='coerce').fillna(0)
+        df = df.dropna(subset=[loss_col, rep_col])
+        from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
+        df = _date_filter(df, loss_col, from_date, to_date)
+        lobs = sorted(df[lob_col].dropna().unique())
+        grain = "Y"; n_periods = to_dt.year - from_dt.year + 1
+
+        p_cols = prem_df.columns.tolist()
+        lob_mapping = {}
+
+        if premium_structure == "Per LOB Column (wide format)":
+            prem_period_col = st.selectbox("Accident Year Column", p_cols, key="bf_prem_period")
+            avail_cols = [c for c in p_cols if c != prem_period_col]
+            st.markdown("**Map each LOB to premium column:**")
+            for lob in lobs:
+                default = next((c for c in avail_cols if c.strip().lower() == lob.strip().lower()), avail_cols[0])
+                lob_mapping[lob] = st.selectbox(f"Column for '{lob}'", avail_cols, index=avail_cols.index(default), key=f"bf_map_{lob}")
+        else:
+            c1, c2, c3 = st.columns(3)
+            with c1: prem_period_col = st.selectbox("Accident Year Column", p_cols, key="bf_prem_ay")
+            with c2: prem_lob_col = st.selectbox("LOB Column", p_cols, key="bf_prem_lob")
+            with c3: prem_val_col = st.selectbox("Premium Column", [c for c in p_cols if c not in [prem_period_col, prem_lob_col]], key="bf_prem_val")
 
         st.markdown("### Expected Loss Ratios (ELR) per LOB")
-        st.caption("ELR is the expected ultimate loss ratio (losses / premium). E.g., 70% means you expect 70 cents of loss per $1 of premium.")
+        elr_inputs = {}
         elr_cols = st.columns(min(len(lobs), 4))
-        elr_dict = {}
         for i, lob in enumerate(lobs):
             with elr_cols[i % 4]:
-                elr_dict[lob] = st.number_input(f"ELR {lob} (%)", 0.0, 200.0, 70.0, 1.0, key=f"bf_elr_{lob}") / 100.0
+                elr_inputs[lob] = st.number_input(f"ELR % for '{lob}'", 0.0, 200.0, 65.0, 1.0, key=f"bf_elr_{lob}") / 100.0
 
         st.markdown("### LDF Method Selection")
         selected_method = "volume_weighted"
@@ -1281,756 +1120,308 @@ def render_bf_calculator():
             all_ldfs = ibnr_bf.calculate_all_ldfs(sample_cum, n_periods)
             ldf_df = pd.DataFrame({
                 "Dev Period": range(1, len(all_ldfs["volume_weighted"]) + 1),
-                "Vol-Weighted": all_ldfs["volume_weighted"],
-                "Simple Avg": all_ldfs["simple_average"],
-                "Geometric": all_ldfs["geometric"],
-                "Medial": all_ldfs["medial"],
-                "Lin Regression": all_ldfs["linear_regression"],
-                "Wtd Last 3": all_ldfs["weighted_last_3"]
+                "Vol-Weighted": all_ldfs["volume_weighted"], "Simple Avg": all_ldfs["simple_average"],
+                "Geometric": all_ldfs["geometric"], "Medial": all_ldfs["medial"],
+                "Lin Regression": all_ldfs["linear_regression"], "Wtd Last 3": all_ldfs["weighted_last_3"]
             })
             st.dataframe(ldf_df.round(4), use_container_width=True)
-            rec_method = "volume_weighted"
-            min_cv = float('inf')
-            for method in ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"]:
-                factors = all_ldfs[method]
-                if len(factors) >= 3:
-                    cv = np.std(factors[:3]) / np.mean(factors[:3]) if np.mean(factors[:3]) > 0 else float('inf')
-                    if cv < min_cv: min_cv = cv; rec_method = method
-            st.info(f"Recommended: {rec_method.replace('_', ' ').title()}")
             selected_method = st.selectbox(
-                "Select LDF Method to Use",
+                "Select LDF Method",
                 ["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"],
-                index=["volume_weighted", "simple_average", "geometric", "medial", "linear_regression", "weighted_last_3"].index(rec_method),
-                key="bf_ldf_method"
+                key="bf_ldf_m"
             )
 
-        st.markdown("### Adjustments")
-        c1, c2 = st.columns(2)
-        with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bf_inf")
-        with c2: use_discounting = st.checkbox("Apply Discounting", key="bf_disc")
-        cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-        if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain, ppy, "bf")
-        if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain, ppy, "bf")
-
         if st.button("Calculate BF IBNR", key="bf_run", use_container_width=True):
-            if ibnr_bf is None or engine_utils is None:
-                st.error("Required engines not available.")
-                return
+            if ibnr_bf is None or engine_utils is None: st.error("Required engines not available."); return
             with st.spinner("Calculating BF IBNR..."):
                 all_results = []
-                inc_triangles = {}
-                ldfs_per_lob = {}
-
                 for lob in lobs:
                     lob_data = df[df[lob_col] == lob].copy()
-
-                    if premium_structure == "Per Row (Accident Year, LOB, Premium)":
-                        # FIXED: Case-insensitive matching
-                        lob_prem = prem_df[prem_df[prem_lob_col].astype(str).str.strip().str.lower() == lob.lower()].copy()
-                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_amount_col] = pd.to_numeric(lob_prem[prem_amount_col], errors='coerce').fillna(0)
-                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                        lob_prem = lob_prem.sort_values(prem_period_col)
-
-                        prems = [0.0] * n_periods
-                        for _, row in lob_prem.iterrows():
-                            period_idx = int(row[prem_period_col]) - from_dt.year
-                            if 0 <= period_idx < n_periods:
-                                prems[period_idx] = row[prem_amount_col]
-                        if sum(prems) == 0:
-                            st.error(f"No premium data mapped for LOB '{lob}'. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
-                            return
+                    if premium_structure == "Per LOB Column (wide format)":
+                        mapped_col = lob_mapping[lob]
+                        prem_series = prem_df.set_index(prem_period_col)[mapped_col].to_dict()
                     else:
-                        prem_col = lob_mapping.get(lob)
-                        lob_prem = prem_df[[prem_period_col, prem_col]].copy()
-                        lob_prem[prem_period_col] = pd.to_numeric(lob_prem[prem_period_col], errors='coerce')
-                        lob_prem[prem_col] = pd.to_numeric(lob_prem[prem_col], errors='coerce').fillna(0)
-                        lob_prem = lob_prem.dropna(subset=[prem_period_col])
-                        lob_prem = lob_prem.sort_values(prem_period_col)
-                        prems = [0.0] * n_periods
-                        for _, row in lob_prem.iterrows():
-                            period_idx = int(row[prem_period_col]) - from_dt.year
-                            if 0 <= period_idx < n_periods:
-                                prems[period_idx] = row[prem_col]
-                        if sum(prems) == 0:
-                            st.error(f"No premium data mapped for LOB '{lob}'. Check that accident years in premium file match the claims date range ({from_dt.year}-{to_dt.year}).")
-                            return
+                        sub_p = prem_df[prem_df[prem_lob_col].astype(str).str.strip().str.lower() == str(lob).strip().lower()]
+                        prem_series = sub_p.set_index(prem_period_col)[prem_val_col].to_dict()
 
-                    for idx, ac in enumerate(amount_cols):
+                    expected_years = [from_dt.year + i for i in range(n_periods)]
+                    premiums_arr = np.array([float(prem_series.get(y, 0.0) or 0.0) for y in expected_years])
+                    elr_val = elr_inputs[lob]
+
+                    for ac in amount_cols:
                         inc, cum, _ = engine_utils.build_triangles(lob_data, loss_col, rep_col, ac, from_dt, grain, n_periods)
-                        if idx == 0:
-                            inc_triangles[lob] = inc.copy()
-                        try:
-                            result = ibnr_bf.calculate_bf_ibnr(
-                                cum_triangle=cum, premiums=prems, elr=elr_dict.get(lob, 0.7),
-                                start_date=from_dt, period_unit=grain,
-                                selected_ldf_method=selected_method,
-                                use_inflation=use_inflation, cum_inflation=cum_inflation,
-                                per_period_rates=per_period_rates,
-                                use_discounting=use_discounting, spot_rates=spot_rates, flat_rate=flat_rate
-                            )
-                        except TypeError:
-                            result = ibnr_bf.calculate_bf_ibnr(
-                                cum_triangle=cum, premiums=prems, elr=elr_dict.get(lob, 0.7),
-                                start_date=from_dt, period_unit=grain
-                            )
-                        if idx == 0:
-                            ldfs_per_lob[lob] = result.get('dev_factors', [])
-                        res_df = result['results_df']
-                        res_df['LOB'] = lob
-                        res_df['Amount_Col'] = ac
-                        all_results.append(res_df)
-
+                        res = ibnr_bf.calculate_bf_ibnr(
+                            cum_triangle=cum, premiums=premiums_arr, elr=elr_val,
+                            start_date=from_dt, period_unit=grain, selected_ldf_method=selected_method
+                        )
+                        rdf = res['results_df']; rdf['LOB'] = lob; rdf['Amount_Col'] = ac
+                        all_results.append(rdf)
                 final_df = pd.concat(all_results, ignore_index=True)
-                ibnr_col = next((c for c in final_df.columns if 'IBNR' in c and 'Real' not in c), 'BF_IBNR')
-                current_col = next((c for c in final_df.columns if 'Current' in c), 'Current_Claims')
-                summary = final_df.groupby(['LOB', 'Amount_Col'])[[current_col, ibnr_col]].sum().reset_index()
+                summary = final_df.groupby(['LOB', 'Amount_Col'])[['Current_Claims', 'IBNR']].sum().reset_index()
 
             st.markdown("### BF IBNR Summary")
             disp = summary.copy()
-            for c in [current_col, ibnr_col]:
-                if c in disp.columns:
-                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
+            for c in ['Current_Claims', 'IBNR']: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
             st.dataframe(disp, use_container_width=True, hide_index=True)
-            total_ibnr = summary[ibnr_col].sum()
+            total_ibnr = summary['IBNR'].sum()
             st.metric("Total BF IBNR", f"{total_ibnr:,.2f}")
 
-            export_sheets = {'BF_Summary': summary, 'BF_Detail': final_df}
-            for lob in lobs:
-                if lob in inc_triangles:
-                    tri = inc_triangles[lob].copy()
-                    tri.columns = [f"Dev_{c}" for c in tri.columns]
-                    tri.index = [f"AY_{i}" for i in tri.index]
-                    export_sheets[f"Incremental_{lob}"] = tri.reset_index()
-                if lob in ldfs_per_lob and ldfs_per_lob[lob]:
-                    ldf_df = pd.DataFrame({
-                        'Dev_Period': [f"{i}-{i+1}" for i in range(len(ldfs_per_lob[lob]))],
-                        'Factor': ldfs_per_lob[lob]
-                    })
-                    export_sheets[f"LDFs_{lob}"] = ldf_df
-                lob_final = final_df[(final_df['LOB'] == lob) & (final_df['Amount_Col'] == amount_cols[0])]
-                if not lob_final.empty:
-                    export_sheets[f"Ultimate_{lob}"] = lob_final[['Accident_Period_Label', current_col, ibnr_col]]
-            output, ext, mime = build_download_payload(export_sheets)
+            output, ext, mime = build_download_payload({'BF_Summary': summary, 'BF_Detail': final_df})
             sc = sanitize_filename(client_name)
             st.download_button("Download BF Results", data=output, file_name=f"{sc}_BF_IBNR.{ext}", mime=mime, key="bf_dl")
     except Exception as e: show_error(e)
     back_button('ibnr_menu', ['Home', 'LIC Calculators', 'Fulfilment Cashflows', 'IBNR Methods'])
 
 
-# ---------- ULAE (USES ENGINE - per-portfolio and aggregated) ----------
+# ---------- ULAE ----------
 def render_ulae_calculator():
     show_breadcrumb()
     st.markdown('<div class="hero"><h1>ULAE Calculator</h1><p>Unallocated Loss Adjustment Expenses</p></div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1: client_name = st.text_input("Client Name", value="Client", key="ulae_cn").strip()
-    with c2: ulae_ratio = st.number_input("ULAE Ratio (%)", 0.0, 30.0, 5.0, 0.5, key="ulae_rt") / 100.0
-    with c3: basis = st.selectbox("Allocation Basis", ["Per Portfolio", "Aggregated"], key="ulae_bs")
-    uploaded = st.file_uploader("Upload Reserves File (LOB, OCR, IBNR)", type=["csv", "xlsx", "xls"], key="ulae_f")
-    if uploaded is None: st.info("Upload file with LOB, OCR, and IBNR columns."); back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
+    client_name = st.text_input("Client Name", value="Client", key="ulae_cn").strip()
+    calc_type = st.radio("Calculation Mode", ["Per Portfolio", "Aggregated"], key="ulae_mode", horizontal=True)
+
+    reserves_file = st.file_uploader("Upload Reserves File (LOB, Reserve_Amount)", type=["csv", "xlsx", "xls"], key="ulae_rf")
+    if reserves_file is None:
+        st.info("Upload reserves summary file.")
+        back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
+
     try:
-        df = read_uploaded_file(uploaded)
-        df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
-        cols = df.columns.tolist()
-        c1, c2, c3 = st.columns(3)
-        with c1: lob_col = st.selectbox("LOB Column", cols, key="ulae_lob")
-        with c2: ocr_col = st.selectbox("OCR Column", cols, key="ulae_ocr")
-        with c3: ibnr_col = st.selectbox("IBNR Column", cols, key="ulae_ibnr")
+        df_res = read_uploaded_file(reserves_file)
+        df_res.columns = df_res.columns.astype(str).str.strip()
+        st.dataframe(df_res.head(3), use_container_width=True)
 
-        if basis == "Aggregated":
-            st.markdown("**Apportionment Data**")
-            app_file = st.file_uploader("Upload Apportionment File (Portfolio, Apportionment_Pct)", type=["csv", "xlsx", "xls"], key="ulae_app")
-            apportionment_df = None
-            if app_file is not None:
-                apportionment_df = read_uploaded_file(app_file)
-                apportionment_df.columns = apportionment_df.columns.astype(str).str.strip()
+        if calc_type == "Per Portfolio":
+            ratio_file = st.file_uploader("Upload ULAE Ratios File (LOB, ULAE_Ratio %)", type=["csv", "xlsx", "xls"], key="ulae_pf")
+            if ratio_file is None: st.info("Upload portfolio ULAE ratios file."); return
+            df_rat = read_uploaded_file(ratio_file)
+            st.dataframe(df_rat.head(3), use_container_width=True)
 
-        if st.button("Calculate ULAE", key="ulae_run", use_container_width=True):
-            if ulae_engine is None:
-                st.error("ULAE engine not available.")
-                return
-            with st.spinner("Calculating ULAE..."):
-                df_renamed = df.rename(columns={
-                    lob_col: 'Portfolio',
-                    ocr_col: 'OCR',
-                    ibnr_col: 'IBNR'
-                })
+            if st.button("Calculate ULAE (Per Portfolio)", key="ulae_run_p", use_container_width=True):
+                if ulae_engine is None: st.error("ULAE engine not available."); return
+                with st.spinner("Calculating..."):
+                    res_df = ulae_engine.calculate_ulae_per_portfolio(df_reserves=df_res, ulae_ratios=df_rat, is_detailed=True)
+                st.markdown("### ULAE Results")
+                st.dataframe(res_df, use_container_width=True)
+                output, ext, mime = build_download_payload({'ULAE_Portfolio': res_df})
+                sc = sanitize_filename(client_name)
+                st.download_button("Download Results", data=output, file_name=f"{sc}_ULAE_Portfolio.{ext}", mime=mime, key="ulae_dl_p")
+        else:
+            ulae_pct = st.number_input("Global ULAE Ratio (%)", 0.0, 100.0, 5.0, 0.5, key="ulae_g_pct") / 100.0
+            app_file = st.file_uploader("Upload Apportionment Data (optional)", type=["csv", "xlsx", "xls"], key="ulae_app_f")
+            df_app = read_uploaded_file(app_file) if app_file else None
 
-                if basis == "Per Portfolio":
-                    portfolios = df_renamed['Portfolio'].unique()
-                    ulae_ratios_dict = {p: ulae_ratio for p in portfolios}
-
-                    res = ulae_engine.calculate_ulae_per_portfolio(
-                        df_reserves=df_renamed[['Portfolio', 'OCR', 'IBNR']],
-                        ulae_ratios=ulae_ratios_dict,
-                        is_detailed=True
-                    )
-                    total_ulae = res['ULAE'].sum()
-
-                else:
-                    if apportionment_df is None:
-                        st.error("Please upload an apportionment file for aggregated calculation.")
-                        return
-
-                    res, total_ulae_base = ulae_engine.calculate_ulae_aggregated(
-                        df_reserves=df_renamed[['Portfolio', 'OCR', 'IBNR']],
-                        ulae_ratio=ulae_ratio,
-                        apportionment_df=apportionment_df,
-                        is_detailed=True
-                    )
-                    total_ulae = res['ULAE'].sum()
-
-            st.markdown("### ULAE Results")
-            disp = res.copy()
-            for c in disp.columns:
-                if c != 'Portfolio' and pd.api.types.is_numeric_dtype(disp[c]):
-                    disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
-            st.dataframe(disp, use_container_width=True, hide_index=True)
-            st.metric("Total ULAE", f"{total_ulae:,.2f}")
-
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as w: res.to_excel(w, index=False, sheet_name='ULAE_Results')
-            output.seek(0); sc = sanitize_filename(client_name)
-            st.download_button("Download ULAE Results", data=output, file_name=f"{sc}_ULAE.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="ulae_dl")
+            if st.button("Calculate ULAE (Aggregated)", key="ulae_run_a", use_container_width=True):
+                if ulae_engine is None: st.error("ULAE engine not available."); return
+                with st.spinner("Calculating..."):
+                    res_df, grand_total = ulae_engine.calculate_ulae_aggregated(df_reserves=df_res, ulae_ratio=ulae_pct, apportionment_df=df_app, is_detailed=True)
+                st.markdown("### ULAE Results")
+                st.dataframe(res_df, use_container_width=True)
+                st.metric("Grand Total ULAE", f"{grand_total:,.2f}")
+                output, ext, mime = build_download_payload({'ULAE_Aggregated': res_df})
+                sc = sanitize_filename(client_name)
+                st.download_button("Download Results", data=output, file_name=f"{sc}_ULAE_Aggregated.{ext}", mime=mime, key="ulae_dl_a")
     except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- NPR (USES ENGINE - aggregation and per-portfolio) ----------
+# ---------- NPR ----------
 def render_npr_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>NPR Calculator</h1><p>Reinsurance Non-Performance Risk - IFRS 17 Para 63(e)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Non-Performance Risk (NPR)</h1><p>Reinsurance Credit Risk / Non-Performance</p></div>', unsafe_allow_html=True)
     client_name = st.text_input("Client Name", value="Client", key="npr_cn").strip()
+    calc_mode = st.radio("Calculation Mode", ["Aggregated", "Per Portfolio"], key="npr_mode", horizontal=True)
 
-    st.markdown("#### Reinsurer Data (Name, Credit Rating, PD, Share)")
-    ri_file = st.file_uploader("Upload Reinsurer File", type=["csv", "xlsx", "xls"], key="npr_rf")
-    st.markdown("#### Ceded LIC Data (Portfolio, Ceded IBNR, Ceded OCR)")
-    lic_file = st.file_uploader("Upload Ceded LIC File", type=["csv", "xlsx", "xls"], key="npr_lf")
-
+    ri_file = st.file_uploader("Upload Reinsurance Data", type=["csv", "xlsx", "xls"], key="npr_rif")
+    lic_file = st.file_uploader("Upload Gross LIC Data", type=["csv", "xlsx", "xls"], key="npr_licf")
     if ri_file is None or lic_file is None:
-        st.info("Upload both Reinsurer and Ceded LIC files.")
-        back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
-        return
+        st.info("Upload both Reinsurance and Gross LIC files.")
+        back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows']); return
 
     try:
-        ri_df = read_uploaded_file(ri_file); ri_df.columns = ri_df.columns.astype(str).str.strip()
-        lic_df = read_uploaded_file(lic_file); lic_df.columns = lic_df.columns.astype(str).str.strip()
-        c1, c2 = st.columns(2)
-        with c1: st.caption("Reinsurer Data"); st.dataframe(ri_df.head(3), use_container_width=True)
-        with c2: st.caption("Ceded LIC Data"); st.dataframe(lic_df.head(3), use_container_width=True)
-
-        rc = ri_df.columns.tolist(); lc = lic_df.columns.tolist()
-
-        npr_basis = st.radio(
-            "NPR Calculation Basis",
-            ["Aggregation (single share per RI)", "Per Portfolio (separate share per portfolio)"],
-            key="npr_basis",
-            help="Aggregation: one overall share per reinsurer. Per Portfolio: separate share columns per portfolio."
-        )
-
-        c1, c2, c3 = st.columns(3)
-        with c1: name_col = st.selectbox("Reinsurer Name", rc, key="npr_rn")
-        with c2: pd_col = st.selectbox("PD Column", rc, key="npr_pd")
-
-        if npr_basis == "Aggregation (single share per RI)":
-            with c3: share_col = st.selectbox("Overall Share Column", rc, key="npr_sh")
-        else:
-            with c3: share_col = st.selectbox("Share Column (base name)", rc, key="npr_sh",
-                                               help="The reinsurer file should have one share column per portfolio (e.g., 'Motor_Share', 'Fire_Share')")
-
-        c1, c2 = st.columns(2)
-        with c1: port_col = st.selectbox("Portfolio Column", lc, key="npr_pc")
-        with c2: ibnr_col = st.selectbox("Ceded IBNR Column", lc, key="npr_ibnr")
-        ocr_col = st.selectbox("Ceded OCR Column", lc, key="npr_ocr")
+        df_ri = read_uploaded_file(ri_file)
+        df_lic = read_uploaded_file(lic_file)
+        st.dataframe(df_ri.head(3), use_container_width=True)
+        st.dataframe(df_lic.head(3), use_container_width=True)
 
         if st.button("Calculate NPR", key="npr_run", use_container_width=True):
-            if npr_engine is None:
-                st.error("NPR engine not available.")
-                return
+            if npr_engine is None: st.error("NPR engine not available."); return
             with st.spinner("Calculating NPR..."):
-                lic_renamed = lic_df.rename(columns={
-                    port_col: 'Portfolio',
-                    ibnr_col: 'Ceded_IBNR',
-                    ocr_col: 'Ceded_OCR'
-                })
-                lic_renamed['Ceded_IBNR'] = pd.to_numeric(lic_renamed['Ceded_IBNR'], errors='coerce').fillna(0)
-                lic_renamed['Ceded_OCR'] = pd.to_numeric(lic_renamed['Ceded_OCR'], errors='coerce').fillna(0)
-                lic_renamed['Total_Ceded_LIC'] = lic_renamed['Ceded_IBNR'] + lic_renamed['Ceded_OCR']
-
-                if npr_basis == "Aggregation (single share per RI)":
-                    ri_renamed = ri_df.rename(columns={
-                        name_col: 'Reinsurer_Name',
-                        pd_col: 'PD',
-                        share_col: 'Overall_Share'
-                    })
-                    ri_renamed['PD'] = pd.to_numeric(ri_renamed['PD'], errors='coerce').fillna(0)
-                    ri_renamed['Overall_Share'] = pd.to_numeric(ri_renamed['Overall_Share'], errors='coerce').fillna(0)
-
-                    res, by_port, by_ri, total_npr = npr_engine.calculate_npr_aggregation(
-                        df_ri=ri_renamed,
-                        df_lic=lic_renamed[['Portfolio', 'Ceded_IBNR', 'Ceded_OCR', 'Total_Ceded_LIC']]
-                    )
+                if calc_mode == "Aggregated":
+                    res_ri, res_lic, summary_df, total_npr = npr_engine.calculate_npr_aggregation(df_ri=df_ri, df_lic=df_lic)
                 else:
-                    ri_renamed = ri_df.rename(columns={
-                        name_col: 'Reinsurer_Name',
-                        pd_col: 'PD'
-                    })
-                    ri_renamed['PD'] = pd.to_numeric(ri_renamed['PD'], errors='coerce').fillna(0)
-
-                    portfolios = lic_renamed['Portfolio'].unique().tolist()
-
-                    res, by_port, by_ri, total_npr = npr_engine.calculate_npr_per_portfolio(
-                        df_ri=ri_renamed,
-                        df_lic=lic_renamed[['Portfolio', 'Ceded_IBNR', 'Ceded_OCR', 'Total_Ceded_LIC']],
-                        portfolios=portfolios
-                    )
+                    portfolios = df_ri['Portfolio'].unique().tolist() if 'Portfolio' in df_ri.columns else []
+                    res_ri, res_lic, summary_df, total_npr = npr_engine.calculate_npr_per_portfolio(df_ri=df_ri, df_lic=df_lic, portfolios=portfolios)
 
             st.markdown("### NPR Results")
-            c1, c2 = st.columns(2)
-            with c1:
-                disp = by_port.copy(); disp['NPR'] = disp['NPR'].apply(lambda x: f"{x:,.2f}")
-                st.dataframe(disp, use_container_width=True, hide_index=True)
-            with c2:
-                disp2 = by_ri.copy(); disp2['NPR'] = disp2['NPR'].apply(lambda x: f"{x:,.2f}")
-                st.dataframe(disp2, use_container_width=True, hide_index=True)
+            st.dataframe(summary_df, use_container_width=True)
             st.metric("Total NPR", f"{total_npr:,.2f}")
-
-            output, ext, mime = build_download_payload({'NPR_by_Portfolio': by_port, 'NPR_by_Reinsurer': by_ri, 'NPR_Detail': res})
+            output, ext, mime = build_download_payload({'NPR_Summary': summary_df, 'RI_Detail': res_ri, 'LIC_Detail': res_lic})
             sc = sanitize_filename(client_name)
-            st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR.{ext}", mime=mime, key="npr_dl")
+            st.download_button("Download NPR Results", data=output, file_name=f"{sc}_NPR_Results.{ext}", mime=mime, key="npr_dl")
     except Exception as e: show_error(e)
     back_button('fulfilment_cashflows', ['Home', 'LIC Calculators', 'Fulfilment Cashflows'])
 
 
-# ---------- Mack RA (uses engine) ----------
-def run_mack_calculation(triangle, confidence, z_score, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
-    with st.spinner("Calculating Mack Chain Ladder..."):
-        n_ay, n_dev = triangle.shape
-        C = triangle.values.copy().astype(float)
-        if mack_engine is not None and hasattr(mack_engine, 'calculate_mack_chain_ladder'):
-            obs_mask = pd.DataFrame(False, index=range(n_ay), columns=range(n_dev))
-            for i in range(n_ay):
-                for j in range(n_dev):
-                    if i + j < n_ay and not np.isnan(C[i, j]): obs_mask.iloc[i, j] = True
-            if origin_date is None: origin_date = pd.Timestamp('2020-01-01')
-            result = mack_engine.calculate_mack_chain_ladder(
-                cum_triangle=triangle, obs_mask=obs_mask, confidence_level=confidence,
-                use_inflation=use_inflation, cum_inflation=cum_inflation,
-                per_period_rates=per_period_rates, use_discounting=use_discounting,
-                spot_rates=spot_rates, flat_rate=flat_rate, grain=grain
-            )
-            res = result['results_df']
-        else:
-            st.error("Mack engine not available.")
-            return
-    st.markdown(f"### Mack RA Results at {confidence:.0%} Confidence")
-    disp = res.copy()
-    for c in ['Current', 'Ultimate', 'IBNR', 'Mack_SE', 'RA']:
-        if c in disp.columns: disp[c] = disp[c].apply(lambda x: f"{x:,.2f}")
-    st.dataframe(disp, use_container_width=True, hide_index=True)
-    c1, c2, c3 = st.columns(3)
-    with c1: st.metric("Total IBNR", f"{res['IBNR'].sum():,.2f}")
-    with c2: st.metric("Total RA", f"{res['RA'].sum():,.2f}")
-    with c3: st.metric("Total LIC", f"{res['IBNR'].sum() + res['RA'].sum():,.2f}")
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as w: res.to_excel(w, index=False, sheet_name='Mack_RA')
-    output.seek(0); sc = sanitize_filename(client_name)
-    st.download_button("Download Mack Results", data=output, file_name=f"{sc}_Mack_RA.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="mck_dl")
-
+# ---------- Mack RA ----------
 def render_mack_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Mack Chain Ladder - Risk Adjustment</h1><p>Distribution-free standard error of IBNR (Mack 1993)</p></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h1>Mack Chain Ladder Risk Adjustment</h1><p>Stochastic Reserving & Value-at-Risk</p></div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    with c1: client_name = st.text_input("Client Name", value="Client", key="mck_cn").strip()
-    with c2: confidence = st.number_input("Confidence Level (%)", 50.0, 99.9, 75.0, 1.0, key="mck_cl") / 100.0
-    z_score = scipy_stats.norm.ppf(confidence)
-    st.info(f"z-score: {z_score:.3f}")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="mck_gr")
-    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="mck_fd")
-    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="mck_td")
-    grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
-    uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="mck_f_cl")
-    if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+    with c1: client_name = st.text_input("Client Name", value="Client", key="mack_cn").strip()
+    with c2: conf_level = st.slider("Confidence Level (%)", 50.0, 99.5, 75.0, 0.5, key="mack_cl") / 100.0
+
+    uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, LOB, Amount)", type=["csv", "xlsx", "xls"], key="mack_f")
+    if uploaded is None:
+        st.info("Upload claims data file.")
+        back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+
     try:
         df = read_uploaded_file(uploaded)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(3), use_container_width=True)
         cols = df.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1: loss_col = st.selectbox("Loss Date", cols, key="mck_ld")
-        with c2: rep_col = st.selectbox("Report Date", cols, key="mck_rd")
-        amount_col = st.selectbox("Amount Column", cols, key="mck_amt")
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
-        df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
-        df = df.dropna(subset=[loss_col, rep_col])
+        c1, c2, c3 = st.columns(3)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="mack_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="mack_rd")
+        with c3: lob_col = st.selectbox("LOB", cols, key="mack_lob")
+        amt_col = st.selectbox("Amount Column", [c for c in cols if pd.api.types.is_numeric_dtype(df[c])], key="mack_amt")
+
+        from_date = st.date_input("From Date", date(2020, 1, 1), key="mack_fd")
+        to_date = st.date_input("To Date", date(2025, 12, 31), key="mack_td")
+        grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="mack_gr")
+        grain_code = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}[grain]
+        ppy = periods_per_year(grain_code)
+
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
-        df = _date_filter(df, loss_col, from_date, to_date)
         n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
-        if engine_utils is not None:
-            _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
-            st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
-            st.markdown("### Adjustments")
-            c1, c2 = st.columns(2)
-            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="mck_inf_cl")
-            with c2: use_discounting = st.checkbox("Apply Discounting", key="mck_disc_cl")
-            cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "mck_cl")
-            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "mck_cl")
-            if st.button("Calculate Mack RA", key="mck_run_cl", use_container_width=True):
-                run_mack_calculation(cum_triangle, confidence, z_score, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
-        else: st.error("Engine utils not available.")
+
+        if st.button("Calculate Mack Risk Adjustment", key="mack_run", use_container_width=True):
+            if mack_engine is None or engine_utils is None: st.error("Mack engine not available."); return
+            with st.spinner("Running Mack Chain Ladder calculation..."):
+                inc, cum, mask = engine_utils.build_triangles(df, loss_col, rep_col, amt_col, from_dt, grain_code, n_periods)
+                res = mack_engine.calculate_mack_chain_ladder(cum_triangle=cum, obs_mask=mask, confidence_level=conf_level)
+
+            st.markdown("### Mack RA Results")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Central Estimate Reserve", f"{res.get('total_reserve', 0):,.2f}")
+            with c2: st.metric("Mack Std Error", f"{res.get('total_se', 0):,.2f}")
+            with c3: st.metric("Risk Adjustment", f"{res.get('total_ra', 0):,.2f}")
+
+            if 'results_df' in res:
+                st.dataframe(res['results_df'], use_container_width=True)
+
+            output, ext, mime = build_download_payload({'Mack_RA': res.get('results_df', pd.DataFrame())})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download Mack Results", data=output, file_name=f"{sc}_Mack_RA.{ext}", mime=mime, key="mack_dl")
     except Exception as e: show_error(e)
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
-# ---------- Bootstrap RA (uses engine) ----------
-def run_bootstrap_calculation(triangle, confidence, n_iter, add_pv, client_name, use_inflation=False, cum_inflation=None, per_period_rates=None, use_discounting=False, spot_rates=None, flat_rate=None, grain='Y', origin_date=None):
-    with st.spinner(f"Running {n_iter:,} bootstrap iterations..."):
-        n_ay, n_dev = triangle.shape
-        C = triangle.values.copy().astype(float)
-
-        if bootstrap_engine is None or not hasattr(bootstrap_engine, 'bootstrap_chain_ladder'):
-            st.error("Bootstrap engine not available.")
-            return
-
-        obs_mask = pd.DataFrame(False, index=range(n_ay), columns=range(n_dev))
-        for i in range(n_ay):
-            for j in range(n_dev):
-                if i + j < n_ay and not np.isnan(C[i, j]):
-                    obs_mask.iloc[i, j] = True
-        if origin_date is None:
-            origin_date = pd.Timestamp('2020-01-01')
-
-        result = bootstrap_engine.bootstrap_chain_ladder(
-            working_cum=triangle, obs_mask=obs_mask, origin=origin_date, grain=grain,
-            n_periods=n_ay, n_iterations=n_iter, add_process_variance=add_pv,
-            use_inflation=use_inflation, per_period_rates=per_period_rates,
-            cum_inflation=cum_inflation, use_discounting=use_discounting,
-            spot_rates=spot_rates, flat_rate=flat_rate, seed=42
-        )
-        cl_ibnr = result['cl_ibnr_nominal']
-        boot_mean = result['bootstrap_mean']
-        pctl = result['percentiles_nominal'].get(int(confidence * 100), boot_mean)
-        ra = max(pctl - boot_mean, 0)
-        arr = result['ibnr_nominal_samples']
-        phi = result.get('phi', 0)
-
-    st.markdown(f"### Bootstrap Results at {confidence:.0%} Confidence")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.metric("CL IBNR", f"{cl_ibnr:,.2f}")
-    with c2: st.metric("Bootstrap Mean", f"{boot_mean:,.2f}")
-    with c3: st.metric(f"P{confidence*100:.0f} Percentile", f"{pctl:,.2f}")
-    with c4: st.metric("Risk Adjustment", f"{ra:,.2f}")
-    st.caption(f"Phi: {phi:.4f} | Iterations: {n_iter:,} | Process Variance: {'Yes' if add_pv else 'No'}")
-    st.markdown("#### IBNR Distribution")
-    counts, bins = np.histogram(arr, bins=30)
-    hist_df = pd.DataFrame({'Bin_Start': bins[:-1], 'Count': counts}).set_index('Bin_Start')
-    st.bar_chart(hist_df)
-    output = BytesIO()
-    pd.DataFrame({'IBNR_Samples': arr}).to_excel(output, index=False)
-    output.seek(0)
-    sc = sanitize_filename(client_name)
-    st.download_button("Download Bootstrap Samples", data=output, file_name=f"{sc}_Bootstrap_Samples.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="bts_dl")
-
+# ---------- Bootstrap RA ----------
 def render_bootstrap_calculator():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>ODP Bootstrap - Risk Adjustment</h1><p>England & Verrall (1999) Bootstrap with Process Variance</p></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: client_name = st.text_input("Client Name", value="Client", key="bts_cn").strip()
-    with c2: confidence = st.number_input("Confidence Level (%)", 50.0, 99.5, 75.0, 1.0, key="bts_cl") / 100.0
-    with c3: n_iter = st.number_input("Iterations", 100, 10000, 1000, 100, key="bts_it")
-    with c4: add_pv = st.checkbox("Process Variance", value=True, key="bts_pv")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="bts_gr")
-    with c2: from_date = st.date_input("From Date", date(2020, 1, 1), key="bts_fd")
-    with c3: to_date = st.date_input("To Date", date(2025, 12, 31), key="bts_td")
-    grain_map = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}; grain_code = grain_map[grain]; ppy = {"Y": 1, "Q": 4, "M": 12}[grain_code]
-    uploaded = st.file_uploader("Upload Claims Data (Loss Date, Report Date, Amount)", type=["csv", "xlsx", "xls"], key="bts_f_cl")
-    if uploaded is None: back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+    st.markdown('<div class="hero"><h1>ODP Bootstrap Risk Adjustment</h1><p>Over-dispersed Poisson Bootstrap Simulation</p></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1: client_name = st.text_input("Client Name", value="Client", key="bs_cn").strip()
+    with c2: n_sims = st.number_input("Number of Simulations", 100, 10000, 1000, 500, key="bs_sims")
+    with c3: conf_level = st.slider("Confidence Level (%)", 50.0, 99.5, 75.0, 0.5, key="bs_cl") / 100.0
+
+    uploaded = st.file_uploader("Upload Claims Data", type=["csv", "xlsx", "xls"], key="bs_f")
+    if uploaded is None:
+        st.info("Upload claims data file.")
+        back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment']); return
+
     try:
         df = read_uploaded_file(uploaded)
         df.columns = df.columns.astype(str).str.strip()
-        st.dataframe(df.head(5), use_container_width=True)
+        st.dataframe(df.head(3), use_container_width=True)
         cols = df.columns.tolist()
-        c1, c2 = st.columns(2)
-        with c1: loss_col = st.selectbox("Loss Date", cols, key="bts_ld")
-        with c2: rep_col = st.selectbox("Report Date", cols, key="bts_rd")
-        amount_col = st.selectbox("Amount Column", cols, key="bts_amt")
-        df[loss_col] = pd.to_datetime(df[loss_col], errors='coerce'); df[rep_col] = pd.to_datetime(df[rep_col], errors='coerce')
-        df[amount_col] = pd.to_numeric(df[amount_col], errors='coerce').fillna(0)
-        df = df.dropna(subset=[loss_col, rep_col])
+        c1, c2, c3 = st.columns(3)
+        with c1: loss_col = st.selectbox("Loss Date", cols, key="bs_ld")
+        with c2: rep_col = st.selectbox("Report Date", cols, key="bs_rd")
+        with c3: amt_col = st.selectbox("Amount Column", [c for c in cols if pd.api.types.is_numeric_dtype(df[c])], key="bs_amt")
+
+        from_date = st.date_input("From Date", date(2020, 1, 1), key="bs_fd")
+        to_date = st.date_input("To Date", date(2025, 12, 31), key="bs_td")
+        grain = st.selectbox("Period Grain", ["Yearly", "Quarterly", "Monthly"], key="bs_gr")
+        grain_code = {"Yearly": "Y", "Quarterly": "Q", "Monthly": "M"}[grain]
+        ppy = periods_per_year(grain_code)
+
         from_dt = pd.Timestamp(str(from_date)); to_dt = pd.Timestamp(str(to_date))
-        df = _date_filter(df, loss_col, from_date, to_date)
         n_periods = int((to_dt.year - from_dt.year) * ppy) + 1
-        if engine_utils is not None:
-            _, cum_triangle, _ = engine_utils.build_triangles(df, loss_col, rep_col, amount_col, from_dt, grain_code, n_periods)
-            st.markdown("#### Built Triangle"); st.dataframe(cum_triangle, use_container_width=True)
-            st.markdown("### Adjustments")
-            c1, c2 = st.columns(2)
-            with c1: use_inflation = st.checkbox("Apply Inflation Adjustment", key="bts_inf_cl")
-            with c2: use_discounting = st.checkbox("Apply Discounting", key="bts_disc_cl")
-            cum_inflation = None; per_period_rates = None; spot_rates = None; flat_rate = None
-            if use_inflation: cum_inflation, per_period_rates = load_inflation_data_ui(grain_code, ppy, "bts_cl")
-            if use_discounting: spot_rates, flat_rate = load_discounting_data_ui(grain_code, ppy, "bts_cl")
-            if st.button(f"Run Bootstrap ({n_iter:,} iterations)", key="bts_run_cl", use_container_width=True):
-                run_bootstrap_calculation(cum_triangle, confidence, n_iter, add_pv, client_name, use_inflation, cum_inflation, per_period_rates, use_discounting, spot_rates, flat_rate, grain_code, origin_date=from_dt)
-        else: st.error("Engine utils not available.")
+
+        if st.button("Run Bootstrap Simulation", key="bs_run", use_container_width=True):
+            if bootstrap_engine is None or engine_utils is None: st.error("Bootstrap engine not available."); return
+            with st.spinner(f"Simulating {n_sims:,} iterations..."):
+                inc, cum, mask = engine_utils.build_triangles(df, loss_col, rep_col, amt_col, from_dt, grain_code, n_periods)
+                res = bootstrap_engine.bootstrap_chain_ladder(
+                    working_cum=cum, obs_mask=mask, origin=from_dt, grain=grain_code,
+                    n_periods=n_periods, n_iterations=n_sims, add_process_variance=True
+                )
+
+            st.markdown("### Bootstrap Simulation Results")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Mean Reserve", f"{res.get('mean_reserve', 0):,.2f}")
+            with c2: st.metric("Std Dev", f"{res.get('std_reserve', 0):,.2f}")
+            with c3: st.metric("Risk Adjustment", f"{res.get('ra_val', 0):,.2f}")
+
+            output, ext, mime = build_download_payload({'Bootstrap_Summary': pd.DataFrame([res])})
+            sc = sanitize_filename(client_name)
+            st.download_button("Download Bootstrap Results", data=output, file_name=f"{sc}_Bootstrap_RA.{ext}", mime=mime, key="bs_dl")
     except Exception as e: show_error(e)
     back_button('risk_adjustment', ['Home', 'LIC Calculators', 'Risk Adjustment'])
 
 
-# =============================================================================
-#  FULL VALUATION (IFRS 17 Engine only)
-# =============================================================================
+# ---------- Full Valuation ----------
 def render_full_valuation():
     show_breadcrumb()
-    st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Complete PAA LRC Rollforward</p></div>', unsafe_allow_html=True)
-    
+    st.markdown('<div class="hero"><h1>Full IFRS 17 Valuation</h1><p>Liability for Remaining Coverage & Incurred Claims Integration</p></div>', unsafe_allow_html=True)
     if full_engine is None:
-        st.error("Full Valuation engine not available.")
-        back_button('home', ['Home'])
-        return
-    
-    st.markdown("### Report Metadata")
-    with st.container():
-        st.markdown('<div class="report-meta">', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            client = st.text_input("Client Name", value=st.session_state.report_metadata.get('client', ''), key="fv_meta_client")
-            st.session_state.report_metadata['client'] = client
-        with c2:
-            val_date = st.date_input("Valuation Date", value=st.session_state.report_metadata.get('val_date', date(2025,12,31)), key="fv_meta_valdate")
-            st.session_state.report_metadata['val_date'] = val_date
-        with c3:
-            report_title = st.text_input("Report Title", value=st.session_state.report_metadata.get('title', 'IFRS 17 Valuation Report'), key="fv_meta_title")
-            st.session_state.report_metadata['title'] = report_title
-        with c4:
-            prepared_by = st.text_input("Prepared By", value=st.session_state.report_metadata.get('prepared_by', ''), key="fv_meta_prepared")
-            st.session_state.report_metadata['prepared_by'] = prepared_by
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown("### Configuration")
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        iacf_toggle = st.selectbox("IACF Treatment", ["Expense Immediately", "Capitalize & Amortize"], key="fv_iacf")
-    with c2:
-        discount_toggle = st.selectbox("Discounting", ["No Discounting", "Apply Discounting"], key="fv_disc")
-    with c3:
-        invest_toggle = st.selectbox("Investment Components", ["No", "Yes"], key="fv_inv")
-    with c4:
-        revenue_toggle = st.selectbox("Revenue Recognition", ["Passage of Time", "Emergence of Risk"], key="fv_rev")
-    
-    config = {
-        'iacf_toggle': iacf_toggle,
-        'discount_toggle': discount_toggle,
-        'invest_toggle': invest_toggle,
-        'revenue_toggle': revenue_toggle
-    }
-    
-    st.markdown("### Upload Files")
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        opening_file = st.file_uploader("1. Opening Balances (Group, Opening_LRC_Excl_Loss, Opening_Loss_Component)", type=["csv","xlsx"], key="fv_ob")
-        policy_file = st.file_uploader("3. Policy Data (Group, Start_Date, End_Date, Written_Premium)", type=["csv","xlsx"], key="fv_pol")
-    with c2:
-        cashflows_file = st.file_uploader("2. Cashflows (Group, Premiums_Received, IACF_Paid, Investment_Components_Paid)", type=["csv","xlsx"], key="fv_cf")
-        if revenue_toggle == "Emergence of Risk":
-            claims_curve_file = st.file_uploader("6. Claims Curve (Period, Percentage) – Optional", type=["csv","xlsx"], key="fv_cc")
-        else:
-            claims_curve_file = None
-    
-    yield_curve_df = None
-    if discount_toggle == "Apply Discounting":
-        st.markdown("#### Discounting Data (Yield Curve)")
-        yc_file = st.file_uploader("Upload Yield Curve (Duration_Years, Spot_Rate %)", type=["csv","xlsx"], key="fv_yc_disc")
-        if yc_file is not None:
-            try:
-                yc_df = read_uploaded_file(yc_file)
-                yc_df.columns = yc_df.columns.astype(str).str.strip()
-                st.markdown("**Yield Curve Column Mapping:**")
-                yc_map = map_columns(yc_df, ['Duration_Years', 'Spot_Rate'], 'fv_yc')
-                yield_curve_df = yc_df.rename(columns={v: k for k, v in yc_map.items()})
-            except Exception as e:
-                show_error(e)
-    
-    st.markdown("#### Loss Component (computed via engine)")
-    lc_data_file = st.file_uploader(
-        "Upload Loss Component Input Data (LOB, Written Premium, Expenses, Commission, Paid Claims, Opening/Closing OCR, IBNR, UPR, RA)",
-        type=["csv","xlsx","xls"], key="fv_lc_data"
-    )
-    loss_comp_df = None
-    lc_computed = False
-    
-    if lc_data_file is not None:
+        st.error("Full Valuation module is currently not available.")
+        back_button('home', ['Home']); return
+
+    client_name = st.text_input("Client Name", value="Client", key="fv_cn").strip()
+    uploaded_file = st.file_uploader("Upload Comprehensive Valuation Model Data", type=["csv", "xlsx", "xls"], key="fv_f")
+    if uploaded_file is not None:
         try:
-            lc_raw = read_uploaded_file(lc_data_file)
-            lc_raw.columns = lc_raw.columns.astype(str).str.strip()
-            st.dataframe(lc_raw.head(3), use_container_width=True)
-            
-            cols = lc_raw.columns.tolist()
-            st.markdown("**Loss Component Column Mapping:**")
-            c1,c2,c3 = st.columns(3)
-            with c1:
-                lob_col = st.selectbox("Line of Business", cols, key="fv_lc_lob")
-                opening_ocr_col = st.selectbox("Opening OCR", cols, key="fv_lc_oocr")
-                opening_ibnr_col = st.selectbox("Opening IBNR", cols, key="fv_lc_oibnr")
-            with c2:
-                wp_col = st.selectbox("Written Premium", cols, key="fv_lc_wp")
-                closing_ocr_col = st.selectbox("Closing OCR", cols, key="fv_lc_cocr")
-                closing_ibnr_col = st.selectbox("Closing IBNR", cols, key="fv_lc_cibnr")
-            with c3:
-                commission_col = st.selectbox("Commission Paid", cols, key="fv_lc_comm")
-                paid_claims_col = st.selectbox("Paid Claims", cols, key="fv_lc_pc")
-                ra_col = st.selectbox("Risk Adjustment", cols, key="fv_lc_ra")
-            c1,c2 = st.columns(2)
-            with c1:
-                expenses_col = st.selectbox("Expenses", cols, key="fv_lc_exp")
-            with c2:
-                opening_upr_col = st.selectbox("Opening UPR", cols, key="fv_lc_oupr")
-            closing_upr_col = st.selectbox("Closing UPR", cols, key="fv_lc_cupr")
-            
-            if st.button("Compute Loss Component", key="fv_lc_calc"):
-                if loss_comp_engine is None:
-                    st.error("Loss Component engine not available.")
-                else:
-                    lc_result = loss_comp_engine.calculate_loss_component(
-                        df=lc_raw, lob_col=lob_col, written_premium_col=wp_col,
-                        expenses_col=expenses_col, commission_col=commission_col,
-                        paid_claims_col=paid_claims_col,
-                        opening_ocr_col=opening_ocr_col, closing_ocr_col=closing_ocr_col,
-                        opening_ibnr_col=opening_ibnr_col, closing_ibnr_col=closing_ibnr_col,
-                        opening_upr_col=opening_upr_col, closing_upr_col=closing_upr_col,
-                        risk_adjustment_col=ra_col
-                    )
-                    st.session_state['lc_computed'] = lc_result
-                    lc_computed = True
-                    st.success("Loss Component computed. Ready for valuation.")
-                    st.dataframe(lc_result)
-        except Exception as e:
-            show_error(e)
-    
-    required = [opening_file, cashflows_file, policy_file, lc_data_file]
-    if all(f is not None for f in required):
-        try:
-            opening_df = read_uploaded_file(opening_file)
-            opening_df.columns = opening_df.columns.astype(str).str.strip()
-            cashflows_df = read_uploaded_file(cashflows_file)
-            cashflows_df.columns = cashflows_df.columns.astype(str).str.strip()
-            policy_df = read_uploaded_file(policy_file)
-            policy_df.columns = policy_df.columns.astype(str).str.strip()
-            
-            st.markdown("### Column Mapping")
-            st.markdown("**Opening Balances:**")
-            ob_map = map_columns(opening_df, ['Group','Opening_LRC_Excl_Loss','Opening_Loss_Component'], 'fv_ob')
-            opening_df = opening_df.rename(columns={v:k for k,v in ob_map.items()})
-            st.markdown("**Cashflows:**")
-            cf_map = map_columns(cashflows_df, ['Group','Premiums_Received','IACF_Paid','Investment_Components_Paid'], 'fv_cf')
-            cashflows_df = cashflows_df.rename(columns={v:k for k,v in cf_map.items()})
-            st.markdown("**Policy Data:**")
-            pol_map = map_columns(policy_df, ['Group','Start_Date','End_Date','Written_Premium'], 'fv_pol')
-            policy_df = policy_df.rename(columns={v:k for k,v in pol_map.items()})
-            
-            if not lc_computed and 'lc_computed' not in st.session_state:
-                st.warning("Please compute the Loss Component first.")
-                return
-            lc_res = st.session_state.get('lc_computed')
-            st.markdown("**Expected Future Premiums** – required for full valuation.")
-            efp_file = st.file_uploader("Upload Expected Future Premiums (Group, Amount)", type=["csv","xlsx"], key="fv_efp")
-            if efp_file is None:
-                st.info("Upload the Expected Future Premiums file to proceed.")
-                return
-            efp_df = read_uploaded_file(efp_file)
-            efp_df.columns = efp_df.columns.astype(str).str.strip()
-            efp_map = map_columns(efp_df, ['Group','Expected_Future_Premiums'], 'fv_efp')
-            efp_df = efp_df.rename(columns={v:k for k,v in efp_map.items()})
-            
-            lc_res = lc_res.rename(columns={lob_col: 'Group'})
-            lc_res = lc_res[['Group','Loss_Ratio','Commission_Ratio','Expense_Ratio','Risk_Adjustment_Ratio']]
-            lc_res = lc_res.rename(columns={'Risk_Adjustment_Ratio':'RA_Ratio'})
-            loss_comp_df = lc_res.merge(efp_df, on='Group')
-            
-            claims_curve_df = None
-            if claims_curve_file is not None:
-                cc_df = read_uploaded_file(claims_curve_file)
-                cc_df.columns = cc_df.columns.astype(str).str.strip()
-                cc_map = map_columns(cc_df, ['Period','Percentage'], 'fv_cc')
-                claims_curve_df = cc_df.rename(columns={v:k for k,v in cc_map.items()})
-            
-            valuation_date = st.session_state.report_metadata.get('val_date', date(2025,12,31))
-            
-            if st.button("Run Full Valuation", key="fv_run", use_container_width=True):
-                with st.spinner("Running IFRS 17 Valuation..."):
-                    results = full_engine.calculate_full_ifrs17_lrc(
-                        opening_balances_df=opening_df,
-                        cashflows_df=cashflows_df,
-                        policy_df=policy_df,
-                        loss_component_df=loss_comp_df,
-                        yield_curve_df=yield_curve_df,
-                        claims_curve_df=claims_curve_df,
-                        config=config,
-                        valuation_date=valuation_date
-                    )
-                st.markdown("### Valuation Results by Group")
-                for group, data in results.items():
-                    with st.expander(f"Group: {group}", expanded=True):
-                        c1,c2,c3 = st.columns(3)
-                        with c1:
-                            st.metric("Opening LRC (excl. Loss)", f"{data['Opening_LRC_Excl_Loss']:,.2f}")
-                            st.metric("Premiums Received", f"{data['Premiums_Received']:,.2f}")
-                            st.metric("Insurance Revenue", f"{data['Insurance_Revenue']:,.2f}")
-                        with c2:
-                            st.metric("Opening Loss Component", f"{data['Opening_Loss_Component']:,.2f}")
-                            st.metric("IACF Paid", f"{data['IACF_Paid']:,.2f}")
-                            st.metric("IACF Amortized", f"{data['IACF_Amortized']:,.2f}")
-                        with c3:
-                            st.metric("Closing LRC (excl. Loss)", f"{data['Closing_LRC_Excl_Loss']:,.2f}")
-                            st.metric("Closing Loss Component", f"{data['Closing_Loss_Component']:,.2f}")
-                            st.metric("Total Closing LRC", f"{data['Total_Closing_LRC']:,.2f}")
-                        st.markdown(f"**Combined Ratio:** {data.get('Combined_Ratio',0):.2%} | **UPR Snapshot:** {data.get('UPR_Snapshot',0):,.2f}")
-        except Exception as e:
-            show_error(e)
-            with st.expander("Details"): import traceback; st.code(traceback.format_exc())
-    else:
-        st.info("Please upload all required files (Opening Balances, Cashflows, Policy, Loss Component Input).")
-    
+            df = read_uploaded_file(uploaded_file)
+            st.dataframe(df.head(5), use_container_width=True)
+            if hasattr(full_engine, 'run_full_valuation'):
+                if st.button("Run Full IFRS 17 Valuation", key="fv_run", use_container_width=True):
+                    with st.spinner("Processing Full Valuation..."):
+                        val_results = full_engine.run_full_valuation(df)
+                    st.markdown("### Valuation Statement")
+                    st.dataframe(val_results, use_container_width=True)
+            else:
+                st.info("Full Valuation engine loaded.")
+        except Exception as e: show_error(e)
     back_button('home', ['Home'])
 
 
 # =============================================================================
 #  MAIN ROUTER
 # =============================================================================
+page_map = {
+    'home': render_home,
+    'lrc': render_lrc,
+    'lic': render_lic,
+    'fulfilment_cashflows': render_fulfilment_cashflows,
+    'ibnr_menu': render_ibnr_menu,
+    'risk_adjustment': render_risk_adjustment,
+    'upr_calculator': render_upr_calculator,
+    'loss_component': render_loss_component,
+    'ocr_calculator': render_ocr_calculator,
+    'percentage_calculator': render_percentage_calculator,
+    'bcl_calculator': render_bcl_calculator,
+    'capecod_calculator': render_capecod_calculator,
+    'bf_calculator': render_bf_calculator,
+    'ulae_calculator': render_ulae_calculator,
+    'npr_calculator': render_npr_calculator,
+    'mack_calculator': render_mack_calculator,
+    'bootstrap_calculator': render_bootstrap_calculator,
+    'full_valuation': render_full_valuation
+}
 
-def main():
-    page = st.session_state.page
-    page_routes = {
-        'home': render_home,
-        'lrc': render_lrc,
-        'lic': render_lic,
-        'fulfilment_cashflows': render_fulfilment_cashflows,
-        'ibnr_menu': render_ibnr_menu,
-        'risk_adjustment': render_risk_adjustment,
-        'upr_calculator': render_upr_calculator,
-        'loss_component': render_loss_component,
-        'ocr_calculator': render_ocr_calculator,
-        'percentage_calculator': render_percentage_calculator,
-        'bcl_calculator': render_bcl_calculator,
-        'capecod_calculator': render_capecod_calculator,
-        'bf_calculator': render_bf_calculator,
-        'ulae_calculator': render_ulae_calculator,
-        'npr_calculator': render_npr_calculator,
-        'mack_calculator': render_mack_calculator,
-        'bootstrap_calculator': render_bootstrap_calculator,
-        'full_valuation': render_full_valuation,
-    }
-    if page in page_routes:
-        page_routes[page]()
-    else:
-        st.error(f"Unknown page: {page}")
-        navigate_to('home', ['Home'])
-
-
-if __name__ == "__main__":
-    main()
+current_page = st.session_state.get('page', 'home')
+render_fn = page_map.get(current_page, render_home)
+render_fn()
