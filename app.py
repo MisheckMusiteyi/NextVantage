@@ -324,7 +324,7 @@ def load_discounting_data_ui(grain_code, ppy, page_key):
 # =============================================================================
 #  STREAMLIT CONFIGURATION
 # =============================================================================
-st.set_page_config(page_title="Next Vantage Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="African Actuarial Consultants Actuarial Toolkit", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""
 <style>
     *, *::before, *::after { box-sizing: border-box !important; }
